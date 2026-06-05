@@ -19,6 +19,9 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from typing import ClassVar
 
+from pydantic import ValidationError
+
+from limpiador.observability.errors import MalformedInputError
 from limpiador.schemas import Schema
 
 # The enforced namespaces. ``git/github/fs/ast/test`` are the five surfaces the
@@ -81,6 +84,44 @@ class Tool(ABC):
                 "parameters": cls.Input.model_json_schema(),
             },
         }
+
+    def invoke(self, request: Schema | dict[str, object]) -> Schema:
+        """Run the tool with its I/O contract enforced at call time.
+
+        This is the entry point the loop uses: it coerces/validates the request
+        into the declared :attr:`Input`, calls :meth:`run`, and verifies the
+        result is the declared :attr:`Output`. ``run`` therefore always receives
+        a valid ``Input`` and is held to returning an ``Output`` — the
+        definition-time check (Input/Output are Schemas) is not enough on its own.
+        """
+        typed_request = self._coerce_input(request)
+        result = self.run(typed_request)
+        self._check_output(result)
+        return result
+
+    def _coerce_input(self, request: Schema | dict[str, object]) -> Schema:
+        """Return the request as a validated :attr:`Input`, or raise typed error."""
+        if isinstance(request, self.Input):
+            return request
+        if isinstance(request, dict):
+            try:
+                return self.Input.model_validate(request)
+            except ValidationError as error:
+                raise MalformedInputError(
+                    f"{self.name}: arguments do not satisfy {self.Input.__name__}: {error}"
+                ) from error
+        raise MalformedInputError(
+            f"{self.name} expected {self.Input.__name__} or a dict, "
+            f"got {type(request).__name__}."
+        )
+
+    def _check_output(self, result: object) -> None:
+        """Enforce that :meth:`run` honored its :attr:`Output` contract."""
+        if not isinstance(result, self.Output):
+            raise TypeError(
+                f"{self.name}.run() must return {self.Output.__name__}, "
+                f"got {type(result).__name__}."
+            )
 
     @abstractmethod
     def run(self, request: Schema) -> Schema:

@@ -12,6 +12,7 @@ import re
 
 import pytest
 
+from limpiador.observability.errors import MalformedInputError
 from limpiador.schemas import FindReferencesRequest, RefList
 from limpiador.tools.base import NAMESPACES, Tool
 
@@ -30,6 +31,47 @@ class _FindReferencesTool(Tool):
 
     def run(self, request: FindReferencesRequest) -> RefList:
         return RefList(symbol=request.symbol, references=[])
+
+
+class _WrongOutputTool(Tool):
+    """A buggy tool whose run() violates its own Output contract on purpose."""
+
+    name = "git.status"
+    description = "Returns the wrong type so the output contract can be tested."
+    Input = FindReferencesRequest
+    Output = RefList
+
+    def run(self, request: FindReferencesRequest) -> RefList:
+        return "not a RefList"  # type: ignore[return-value]
+
+
+def test_invoke_validates_input_runs_and_returns_typed_output() -> None:
+    result = _FindReferencesTool().invoke(
+        FindReferencesRequest(file="billing.py", symbol="calculate_total")
+    )
+    assert isinstance(result, RefList)
+
+
+def test_invoke_coerces_a_raw_dict_into_the_typed_input() -> None:
+    """The loop hands raw tool-call arguments; invoke builds the Input from them."""
+    result = _FindReferencesTool().invoke({"file": "billing.py", "symbol": "x"})
+    assert isinstance(result, RefList)
+    assert result.symbol == "x"
+
+
+def test_invoke_rejects_a_dict_that_violates_the_input_contract() -> None:
+    with pytest.raises(MalformedInputError):
+        _FindReferencesTool().invoke({"file": "billing.py"})  # missing 'symbol'
+
+
+def test_invoke_rejects_the_wrong_input_type() -> None:
+    with pytest.raises(MalformedInputError):
+        _FindReferencesTool().invoke(RefList(symbol="x"))  # not a FindReferencesRequest
+
+
+def test_invoke_rejects_output_that_breaks_the_contract() -> None:
+    with pytest.raises(TypeError):
+        _WrongOutputTool().invoke(FindReferencesRequest(file="a.py", symbol="x"))
 
 
 def test_namespace_is_derived_from_the_name() -> None:
