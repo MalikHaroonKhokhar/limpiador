@@ -152,6 +152,20 @@ def _schema_name(schema: dict[str, Any]) -> str:
         return str(function.get("name", ""))
     return ""
 
+
+def _priced(tier: "ModelTier | None", usage: "TokenUsage | None") -> float | None:
+    """The USD cost of one call from its tier's per-million prices, or None.
+
+    None when the tier is unknown (a pinned model has no configured price) or the
+    provider returned no usage — both honest "we cannot price this" signals.
+    """
+    if tier is None or usage is None:
+        return None
+    return (
+        usage.prompt_tokens * tier.input_usd_per_million
+        + usage.completion_tokens * tier.output_usd_per_million
+    ) / 1_000_000
+
 # The agent core speaks these shapes; provider types never cross this boundary.
 Messages = list[dict[str, Any]]
 ToolSchemas = list[dict[str, Any]]
@@ -253,13 +267,16 @@ class OpenAIAdapter(LLMAdapter):
 
     def complete(self, messages: Messages, tools: ToolSchemas | None = None) -> LLMResponse:
         kind = classify_turn(messages)
-        model = self._pinned_model or self._routing.tier_for(kind).name
+        # A pinned model has no known tier price; a routed one does, which is what
+        # lets us annotate the response with a per-call cost for the trace.
+        tier = None if self._pinned_model else self._routing.tier_for(kind)
+        model = self._pinned_model or (tier.name if tier else "")
         self._record_routing(kind, model, messages, tools)
         request: dict[str, Any] = {"model": model, "messages": messages}
         if tools:
             request["tools"] = tools
         response = self._client.chat.completions.create(**request)
-        return self._parse_response(response)
+        return self._parse_response(response, model=model, route=kind.value, tier=tier)
 
     def _record_routing(
         self, kind: TurnKind, model: str, messages: Messages, tools: ToolSchemas | None
@@ -268,13 +285,29 @@ class OpenAIAdapter(LLMAdapter):
         fingerprint = prefix_fingerprint(messages, tools)
         self._trace(ROUTING_TAG, f"{kind.value} -> {model} (stable-prefix {fingerprint[:12]})")
 
-    def _parse_response(self, response: Any) -> LLMResponse:
-        """Normalize a provider response into a typed LLMResponse."""
+    def _parse_response(
+        self,
+        response: Any,
+        *,
+        model: str = "",
+        route: str | None = None,
+        tier: "ModelTier | None" = None,
+    ) -> LLMResponse:
+        """Normalize a provider response into a typed LLMResponse.
+
+        The routing annotations (``model``, ``route``, and a priced ``cost_usd``
+        when the model's tier is known) ride along so the loop can record a fully
+        structured model-call trace entry without reaching back into the adapter.
+        """
         message = response.choices[0].message
+        usage = self._parse_usage(response.usage)
         return LLMResponse(
             text=message.content,
             tool_calls=self._parse_tool_calls(message),
-            usage=self._parse_usage(response.usage),
+            usage=usage,
+            model=model or None,
+            route=route,
+            cost_usd=_priced(tier, usage),
         )
 
     @staticmethod

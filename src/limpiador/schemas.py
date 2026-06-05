@@ -201,6 +201,12 @@ class LLMResponse(Schema):
     text: str | None = None
     tool_calls: list[ToolCall] = Field(default_factory=list)
     usage: TokenUsage | None = None
+    # Routing/cost annotations the adapter fills so the loop can record a fully
+    # structured model-call trace entry (ARCHITECTURE.md §13). The mock leaves
+    # them unset: a mock turn has no real model, route, or price.
+    model: str | None = None
+    route: str | None = None
+    cost_usd: float | None = None
 
 
 # ============================================================================
