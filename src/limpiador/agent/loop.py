@@ -55,9 +55,15 @@ def run(
     """Drive the agent loop to completion (``finish``) or a guarded abort.
 
     Each turn: guard-check the ceiling, assemble the active schemas, call the
-    model, dispatch every tool call it returns (OpenAI may return several at
-    once), fold each typed result — or a structured error for a failed call —
-    back into the transcript, then terminate on ``finish`` or repeat.
+    model, dispatch every tool call it returns, fold each typed result — or a
+    structured error for a failed call — back into the transcript, then terminate
+    on ``finish`` or repeat.
+
+    "OpenAI may return several tool calls at once" is the provider's *parallel
+    tool calls* — several calls in one assistant turn, not a request for
+    concurrency. They are dispatched sequentially, in the order returned, because
+    these tools have side effects (writes, git operations) where ordering is
+    correctness, not latency: a deterministic in-order batch is the safe choice.
     """
     guard = guard or CallGuard()
     messages: Messages = _initial_messages(task, system_prompt)
@@ -78,6 +84,8 @@ def run(
         if not response.tool_calls:
             return RunResult(response.text, aborted=False, turns=turns, tool_calls=tuple(dispatched), messages=messages)
 
+        # Dispatch the turn's calls sequentially, in order (see the docstring on
+        # parallel-vs-concurrent), folding each typed result into the transcript.
         finished: str | None = None
         for call in response.tool_calls:
             guard.record()
@@ -86,8 +94,11 @@ def run(
             if call.name == FINISH and finished is None:
                 finished = _finish_text(messages[-1])
 
-        # Fold-and-compact (ARCHITECTURE.md §6 step 5): results are already folded
-        # above; threshold-triggered compaction (§7, property #3) plugs in here.
+        # Step 5 of §6 is "fold and compact". Folding happens above; compaction is
+        # deliberately out of scope here — it is property #3 (§7), built in its
+        # own ticket against the Context object (context.py). This is its seam:
+        # when the transcript's token footprint crosses the threshold, the
+        # eviction strategy runs here. Until then the loop is "fold now".
 
         if finished is not None:
             return RunResult(finished, aborted=False, turns=turns, tool_calls=tuple(dispatched), messages=messages)
