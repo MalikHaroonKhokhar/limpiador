@@ -16,6 +16,7 @@ is how a turn cycle ends, the way a function recognizes ``return``.
 
 from __future__ import annotations
 
+import copy
 import json
 import time
 from dataclasses import dataclass, field
@@ -178,21 +179,35 @@ def _timed_complete(
 
     The model name, routing decision, token usage, and per-call cost ride in on
     the normalized response (the adapter annotated them); the loop adds the
-    wall-clock latency it measured. For the mock those annotations are absent, so
-    the entry records a model turn with no real model, route, or price.
+    wall-clock latency it measured and a snapshot of the input it sent. For the
+    mock those annotations are absent, so the entry records a model turn with no
+    real model, route, or price.
     """
+    tools = registry.active_schemas()
     start = time.perf_counter()
-    response = adapter.complete(messages, tools=registry.active_schemas())
+    response = adapter.complete(messages, tools=tools)
     latency = time.perf_counter() - start
     tracer.record_model_call(
         model=response.model,
         latency_s=latency,
+        input=_model_input(messages, tools),
         output=response.text,
         usage=response.usage,
         route=response.route,
         cost_usd=response.cost_usd,
     )
     return response
+
+
+def _model_input(messages: Messages, tools: list[dict[str, object]]) -> dict[str, object]:
+    """A snapshot of what the model was sent this turn: the messages and the tools.
+
+    The messages are deep-copied because the live transcript keeps growing — and
+    is rewritten in place by compaction — so a reference would later read as the
+    final state, not what *this* turn actually saw. The tool schemas are freshly
+    built each turn by the registry, so they need no copy.
+    """
+    return {"messages": copy.deepcopy(messages), "tools": tools}
 
 
 def _timed_dispatch(registry: ToolRegistry, call: ToolCall, tracer: Tracer) -> dict[str, object]:

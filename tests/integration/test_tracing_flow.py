@@ -105,6 +105,30 @@ def test_a_tool_input_and_output_are_captured_on_the_entry() -> None:
     assert read.output is not None  # the folded typed result is recorded
 
 
+def test_a_model_call_records_the_input_it_was_sent() -> None:
+    trace = _canonical_run()
+    first = trace.model_calls[0]
+    assert first.input is not None
+    sent = first.input["messages"]
+    # the opening turn's input is the conversation as sent: the task, no results yet
+    assert any(
+        m.get("role") == "user" and "rename calc" in str(m.get("content", "")) for m in sent
+    )
+    # the tool schemas the model was offered are recorded too
+    assert first.input["tools"] is not None
+
+
+def test_model_call_input_is_a_snapshot_not_aliased_to_the_final_transcript() -> None:
+    trace = _canonical_run()
+    opening = trace.model_calls[0].input["messages"]
+    closing = trace.model_calls[-1].input["messages"]
+    # the first turn saw no tool results; the last saw several — each entry froze
+    # what *that* turn was sent, not a shared reference to the grown transcript
+    assert all(m.get("role") != "tool" for m in opening)
+    assert any(m.get("role") == "tool" for m in closing)
+    assert len(closing) > len(opening)
+
+
 def test_a_failed_tool_call_is_still_recorded_with_its_error() -> None:
     registry = _loaded_registry(
         _stub_tool("fs.read_file", error=NotFoundError("no such file: ghost.py")),
