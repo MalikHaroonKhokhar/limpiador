@@ -152,24 +152,25 @@ def _assistant_message(response: LLMResponse) -> dict[str, object]:
     return message
 
 
-def _dispatch_one(registry: ToolRegistry, call: ToolCall) -> dict[str, object]:
-    """Run one tool call and return its folded ``tool`` message.
+def _dispatch_one(registry: ToolRegistry, call: ToolCall) -> tuple[dict[str, object], str | None]:
+    """Run one tool call; return its folded ``tool`` message and the error kind.
 
-    A typed :class:`ToolError` is *recoverable*: it is folded back as a structured
-    error result the model can read and adapt to, never re-raised. Only the
-    failure kind and message cross the boundary — not a stack trace.
+    A typed :class:`ToolError` is *recoverable*: it is folded back as the
+    structured, model-readable payload ``error.as_tool_result()`` produces — the
+    model can read it and adapt — never re-raised, never reduced to a stack trace.
+    The error kind (its class name, or ``None`` on success) is returned alongside
+    so the caller records it on the trace without re-parsing the content.
     """
     try:
         result = registry.dispatch(call.name, call.arguments)
-        content = result.model_dump_json()
+        return _tool_message(call, result.model_dump_json()), None
     except ToolError as error:
-        content = json.dumps({"error": type(error).__name__, "message": str(error)})
-    return {
-        "role": "tool",
-        "tool_call_id": call.id,
-        "name": call.name,
-        "content": content,
-    }
+        return _tool_message(call, json.dumps(error.as_tool_result())), type(error).__name__
+
+
+def _tool_message(call: ToolCall, content: str) -> dict[str, object]:
+    """The OpenAI-shaped ``tool`` message folding one call's result by its id."""
+    return {"role": "tool", "tool_call_id": call.id, "name": call.name, "content": content}
 
 
 def _timed_complete(
@@ -218,28 +219,16 @@ def _timed_dispatch(registry: ToolRegistry, call: ToolCall, tracer: Tracer) -> d
     folded as recoverable — the error kind, so the trace tells the whole story.
     """
     start = time.perf_counter()
-    message = _dispatch_one(registry, call)
+    message, error_kind = _dispatch_one(registry, call)
     latency = time.perf_counter() - start
-    content = str(message["content"])
     tracer.record_tool_call(
         tool=call.name,
         latency_s=latency,
         input=call.arguments,
-        output=content,
-        error=_error_kind(content),
+        output=str(message["content"]),
+        error=error_kind,
     )
     return message
-
-
-def _error_kind(content: str) -> str | None:
-    """The error type from a folded error result, or None for a normal result."""
-    try:
-        parsed = json.loads(content)
-    except (ValueError, TypeError):
-        return None
-    if isinstance(parsed, dict) and "error" in parsed:
-        return str(parsed["error"])
-    return None
 
 
 def _record_payload(context: Context, call: ToolCall, message: dict[str, object]) -> None:
