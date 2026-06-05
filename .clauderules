@@ -1,0 +1,186 @@
+# limpiador — Agent Development Rules (.clauderules)
+
+These rules govern how Claude Code works on this repository. They exist to
+protect token budget, production code integrity, and architectural coherence
+across a focused five-day build. Read them before each working session.
+
+# 1. NO "BRUTE FORCE" DEBUGGING
+- If a fix fails twice, STOP. Do not try a third time blindly.
+- Ask the user for guidance or propose a new, explicitly stated hypothesis.
+- Never loop endlessly consuming tokens. The agent we are BUILDING has a
+  call-count kill-switch for exactly this reason; the same discipline applies to
+  the engineer building it.
+
+# 2. PRODUCTION CODE SANCTITY
+- NEVER modify production code (`src/limpiador/`) to bypass a test failure
+  (e.g., "if MOCK_MODE return True" sprinkled into the loop or a tool).
+- If a test fails, fix the bug or fix the test, not reality.
+- Mocks belong in `tests/`. The one mock model adapter is injected into the
+  agent core through the real LLM interface — it is never branched on inside
+  `src/limpiador/`. Production code must not know whether it is talking to a real
+  or a mock model.
+
+# 3. ROOT CAUSE FIRST
+- When seeing an error (e.g., `AttributeError`, a malformed tool result),
+  analyze the STACK TRACE first.
+- Do not guess. Read the code where the error originates before proposing a fix.
+- For agent-behavior failures, read the trace (`observability/tracing.py`
+  output) before reading code — the trace tells you which tool call went wrong.
+
+# 4. TOKEN ECONOMY
+- Do not re-read the entire codebase for every small task.
+- If a task needs > 5 files or > 1000 lines of context total:
+  - Explain why, and ask the user for guidance first.
+- Be specific with `@file` references when requesting context. Prefer
+  `@src/limpiador/tools/registry.py` over "the tools".
+- This mirrors the product itself: limpiador summarizes-and-evicts rather than
+  re-reading. Work the same way on the repo.
+
+# 5. ARCHITECTURAL INTEGRITY
+- Respect the layers (see ARCHITECTURE.md §3). Dependencies point downward only.
+- NEVER import `tests/` or `evals/` into `src/limpiador/`.
+- All provider-specific code stays in `agent/llm.py`. Do not let OpenAI types
+  leak into the loop, the tools, or the schemas.
+- Every tool consumes and emits typed objects from `schemas.py`. Do not pass
+  free text between tools, and do not relabel a plain function call as a
+  subagent — the reviewer subagent must keep its isolated context and scoped
+  registry.
+- Keep the registry coherent: a new tool is registered and discovered via
+  `search_tools`. Do not add conditional dispatch branches to the loop.
+
+# 6. TEST-DRIVEN FIXES & TEST PYRAMID
+- MANDATORY TDD WORKFLOW for all bug fixes and features:
+  1. WRITE TESTS FIRST — unit tests (tool logic, registry, context) + eval cases
+     (real-model reasoning on a seeded fixture) where behavior is the thing
+     under test.
+  2. RUN TESTS — verify they all FAIL (Red Phase). If any pass, the test is wrong.
+  3. FIX THE CODE — make the minimal change to pass the tests.
+  4. RUN TESTS AGAIN — verify they all PASS (Green Phase).
+  5. RUN FULL REGRESSION — `make test` to catch regressions.
+  6. Only then commit.
+- When fixing a bug, read the failing test first. Understand the expected
+  behavior. Only then read the production code.
+- NEVER skip writing tests. NEVER fix code without a failing test first.
+- Group related work: write ALL tests for a batch, then fix ALL, then verify ALL.
+
+## Test Pyramid Strategy
+Every fix AND new feature includes tests at the right layers.
+
+### Layer 1: Unit Tests (tests/unit/) — FAST, mock model, no network
+- Extract core logic into pure functions and test them directly.
+- Mock external dependencies (OpenAI, GitHub API, subprocess).
+- Cover edge cases exhaustively: empty, null, boundary, malformed tool input.
+- Target: dozens of tests, < 1s total runtime.
+
+### Layer 2: Mock Integration (tests/integration/*_mock.py) — mock model, real temp repos
+- Drive the full agent loop with the deterministic mock LLM over scripted
+  tool-call sequences; assert the loop reaches the expected end state.
+- Validate registry loading, context compaction, retry/backoff, and that the
+  reviewer subagent runs isolated with its scope enforced.
+- Use the temp-git-repo and loaded-registry fixtures from `conftest.py`.
+- Target: a handful per feature, seconds total.
+
+### Layer 3: E2E (tests/integration/*_e2e.py) — REAL OpenAI + REAL git/github
+- Invoke limpiador the way a user does — through the CLI, not by calling the
+  loop in-process. The PLUMBING is under test: arg parsing, agent boot, auth,
+  a real commit landing, a real PR opening, clean exit.
+- Runs ONLY against the THROWAWAY sandbox repo (`LIMPIADOR_SANDBOX_REPO`).
+  NEVER point E2E at a real repo.
+- Skip gracefully (`pytest.skip`) when `OPENAI_API_KEY`, `GITHUB_TOKEN`, or
+  `LIMPIADOR_SANDBOX_REPO` is unset, so CI stays green.
+- Use RELAXED assertions (the model is non-deterministic).
+- Keep count LOW (slow, costs credits): 2-4 tests. Run via `make test-e2e`,
+  never in the default `make test`.
+
+### Reproduction Tests (tests/reproduce/) — REAL model
+- One test per reported behavior. Starts 🔴 FAILING (TDD red), becomes
+  🟢 PASSING after the fix. Uses the real model to match actual behavior.
+
+### Eval Cases (evals/cases/) — REAL OpenAI, seeded fixtures — DISTINCT FROM E2E
+- Eval cases test the AGENT'S REASONING; E2E tests the PIPELINE. Same run mode,
+  different concern, different directory. Do NOT merge them.
+- Run the agent against a committed fixture repo with a KNOWN seeded defect.
+- Assert on BOTH outcome (goal achieved) and trace (reasoned correctly, right
+  tool order, under the call ceiling).
+- Keep ground-truth checks binary even where prose is non-deterministic (the
+  test now passes; the symbol is renamed everywhere; the planted regression was
+  flagged).
+- Keep the count LOW (slow, costs credits). Run via `make eval`.
+
+### Rules
+- Do NOT write only E2E or eval cases. Always start with unit tests.
+- Do NOT skip the mock-integration layer — it catches loop/format/routing bugs
+  cheaply on the mock model.
+- Every new tool gets unit coverage before it is wired into the registry.
+- At least one eval case must carry a planted red herring (an innocent
+  recently-changed file beside the truly-broken one).
+- E2E and evals run ONLY in REAL mode. Mechanics run ONLY in MOCK mode. Using
+  the wrong mode wastes either credits or confidence.
+
+# 7. RUN MODES (CRITICAL)
+limpiador is a CLI, not a server. There are no ports. Instead there are two
+distinct RUN MODES, selected by env var / Makefile target. ALWAYS use the
+correct one.
+
+## MOCK MODE
+- **Config:** `LIMPIADOR_LLM=mock`
+- **Behaviour:** deterministic mock LLM adapter, temp git fixtures, no network.
+- **Purpose:** fast, free, deterministic development and the entire test suite.
+- **Start:** `make dev-mock` / `make test`
+- **Use for:** unit tests, integration tests, loop mechanics, CI, building any
+  feature before spending a real credit.
+
+## REAL MODE
+- **Config:** `LIMPIADOR_LLM=openai` (requires `OPENAI_API_KEY`)
+- **Behaviour:** real OpenAI model, real git repositories, real GitHub API.
+- **Purpose:** exercising the model's actual reasoning.
+- **Start:** `make eval` / `make run REPO=... TASK="..."`
+- **Use for:** the eval harness, reproducing a specific reported behavior, the
+  demo recording.
+
+## CRITICAL: which mode answers which question
+- Reasoning/behavior questions ("did it investigate well", "did it catch the
+  regression") can ONLY be validated in REAL mode. Mock mode does not exercise
+  model judgment and will not replicate it.
+- Mechanics questions (routing, dispatch, format, compaction, retry) MUST be
+  validated in MOCK mode because they are deterministic and free.
+- Using the wrong mode wastes either credits or confidence. Pick deliberately.
+
+# 8. ARCHITECTURAL DEBT TRACKER
+Track known limitations that need data or time before investing in a fix.
+Tag them in the trace so frequency can be measured.
+
+## ARCH_DEBT_001: Tool search ranking is keyword-based, not semantic
+- **Location:** `src/limpiador/tools/registry.py` → `search` / `_rank`
+- **Problem:** `search_tools` ranks candidate tools by keyword overlap on tool
+  name and description. A query phrased differently from the tool's wording
+  (e.g. "where is this function used" vs a `find_references` description that
+  says "locate call sites") may rank the right tool low and cause the model to
+  load the wrong tool or call `search_tools` again, burning a turn.
+- **Current mitigation:** descriptions are written with synonym-rich phrasing to
+  widen keyword overlap; covers the common phrasings. Instrumented with a trace
+  tag when the model re-searches within two turns.
+- **Trace tag:** `[REGISTRY RESEARCH_RETRY]` — count occurrences in run traces.
+- **Decision trigger:** if it fires on more than ~15% of runs, invest in the fix.
+- **Proper fix:** embed tool descriptions once at startup and rank `search_tools`
+  by cosine similarity instead of keyword overlap. Local embeddings, computed
+  once, no per-turn model cost.
+- **Effort estimate:** Small–Medium — add an embedding step at registry init and
+  swap the ranking function; the interface is unchanged.
+- **Added:** v0.1
+
+## ARCH_DEBT_002: Context compaction summary is lossy on wide refactors
+- **Location:** `src/limpiador/agent/context.py` → eviction / summarize
+- **Problem:** when a task touches many files, summarizing-and-evicting early
+  reads can drop a detail the agent needs much later (e.g. an import edge noted
+  on call 4 that matters on call 22), forcing a re-read.
+- **Current mitigation:** symbol-level facts (definitions, references, imports)
+  are kept in durable state and never evicted; only raw payloads are dropped.
+- **Trace tag:** `[CONTEXT REREAD]` — fires when a file is read twice in a run.
+- **Decision trigger:** if re-reads exceed ~2 per long-horizon run on average,
+  revisit what counts as durable state.
+- **Proper fix:** promote import/dependency edges into durable state at read
+  time so they survive eviction without keeping the raw file.
+- **Effort estimate:** Small — extend the durable-state schema and the read-time
+  extraction.
+- **Added:** v0.1

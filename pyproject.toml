@@ -1,0 +1,59 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "limpiador"
+version = "0.1.0"
+description = "An autonomous git maintenance agent driven by an OpenAI function-calling loop."
+readme = "README.md"
+requires-python = ">=3.11"
+license = { file = "LICENSE" }
+authors = [{ name = "limpiador" }]
+keywords = ["agent", "git", "maintenance", "openai", "tool-use"]
+
+# Runtime dependencies are deliberately thin: typed contracts are core (every
+# tool's I/O is a pydantic model — ARCHITECTURE.md §8). The provider SDK, the
+# parser, and the git/github clients live under the `dev` extra below because
+# mock-mode development and the entire test suite never touch them.
+dependencies = [
+  "pydantic>=2.9",
+]
+
+[project.optional-dependencies]
+# Everything needed to build, test, and run limpiador for real. Installed by
+# `make install` via `pip install -e ".[dev]"`.
+dev = [
+  "pytest>=8.2",
+  "pytest-cov>=5.0",
+  "pytest-xdist>=3.6",
+  "openai>=1.40",
+  "tree-sitter>=0.23",
+  "tree-sitter-python>=0.23",
+  "gitpython>=3.1.43",
+  "pygithub>=2.4",
+]
+
+[project.scripts]
+limpiador = "limpiador.cli:main"
+
+[project.urls]
+Homepage = "https://example.com/limpiador"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+# ============================================================================
+# pytest — marker registration + strict collection (CI-readiness)
+# ============================================================================
+# `--strict-markers` turns any unregistered marker into an error rather than a
+# silent warning, so `-m "not e2e"` / `-m e2e` filter cleanly and CI never logs
+# an unknown-marker warning. The `e2e` marker is the only custom marker: it tags
+# the real-mode tier that costs credits and hits the throwaway repo.
+[tool.pytest.ini_options]
+minversion = "8.2"
+testpaths = ["tests"]
+addopts = "--strict-markers -ra"
+markers = [
+  "e2e: real-mode end-to-end test (REAL OpenAI + REAL git/github on a throwaway repo); deselect with -m 'not e2e'",
+]
