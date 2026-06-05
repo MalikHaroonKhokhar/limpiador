@@ -26,10 +26,21 @@ from typing import Any
 
 import openai
 
-from limpiador.observability.errors import ConfigError
+from limpiador.observability.errors import ConfigError, TransientError
+from limpiador.observability.retry import Resilience, resilient_call
 from limpiador.observability.tracing import ROUTING_TAG, emit
 from limpiador.schemas import LLMResponse, TokenUsage, ToolCall
 from limpiador.tools.registry import CORE_TOOL_NAMES
+
+# The provider failures worth retrying: timeouts, dropped connections, rate
+# limits, and 5xx server errors. A bad request or an auth error is *not* here —
+# retrying those just wastes calls — so they propagate unretried (CLEAN_CODE §6).
+_TRANSIENT_OPENAI_ERRORS = (
+    openai.APITimeoutError,
+    openai.APIConnectionError,
+    openai.RateLimitError,
+    openai.InternalServerError,
+)
 
 # Configuration, not literals (CLEAN_CODE.md §7): the key env var and the model
 # override env var.
@@ -246,12 +257,20 @@ class OpenAIAdapter(LLMAdapter):
         client: Any | None = None,
         routing: RoutingConfig | None = None,
         tracer: Tracer = emit,
+        resilience: Resilience | None = None,
     ) -> None:
         # An explicit model (flag or env) pins one model for every turn, bypassing
         # routing — the operator's escape hatch. Otherwise routing decides per turn.
         self._pinned_model = model or os.environ.get(OPENAI_MODEL_ENV) or None
         self._routing = routing or DEFAULT_ROUTING
         self._trace = tracer
+        # Resilience for the one external call this adapter makes (§13): a token
+        # bucket throttles it and bounded backoff retries transient provider
+        # failures. One bucket per adapter, applied at this boundary — not scattered.
+        self._resilience = resilience or Resilience()
+        self._retry = self._resilience.retry
+        self._sleep = self._resilience.sleep
+        self._limiter = self._resilience.bucket()
         self._client = client if client is not None else self._build_client(api_key)
 
     @staticmethod
@@ -275,8 +294,25 @@ class OpenAIAdapter(LLMAdapter):
         request: dict[str, Any] = {"model": model, "messages": messages}
         if tools:
             request["tools"] = tools
-        response = self._client.chat.completions.create(**request)
+        response = self._create(request)
         return self._parse_response(response, model=model, route=kind.value, tier=tier)
+
+    def _create(self, request: dict[str, Any]) -> Any:
+        """The one external call, made resilient: rate-limited and retried (§13).
+
+        A transient provider failure (timeout, connection, rate limit, 5xx) is
+        translated into a typed ``TransientError`` so the shared retry backs off
+        and retries it; a non-transient provider error (a bad request, an auth
+        failure) is not caught here, so it propagates unretried.
+        """
+
+        def call() -> Any:
+            try:
+                return self._client.chat.completions.create(**request)
+            except _TRANSIENT_OPENAI_ERRORS as error:
+                raise TransientError(f"openai transient failure: {error}") from error
+
+        return resilient_call(call, limiter=self._limiter, policy=self._retry, sleep=self._sleep)
 
     def _record_routing(
         self, kind: TurnKind, model: str, messages: Messages, tools: ToolSchemas | None
