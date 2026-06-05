@@ -153,7 +153,26 @@ def test_optional_fields_default_rather_than_require() -> None:
 def test_test_result_ok_reflects_failures() -> None:
     """The derived ok flag is true only when nothing failed."""
     assert TestResult(passed=2, failed=0).ok is True
-    assert TestResult(passed=2, failed=1).ok is False
+    assert (
+        TestResult(
+            passed=2,
+            failed=1,
+            failures=[TestFailure(test="t", file="t.py", line=1, message="boom")],
+        ).ok
+        is False
+    )
+
+
+def test_test_result_rejects_inconsistent_failed_count() -> None:
+    """A failed count that disagrees with the structured failure list is rejected."""
+    with pytest.raises(ValidationError):
+        TestResult(passed=0, failed=2, failures=[])
+    with pytest.raises(ValidationError):
+        TestResult(
+            passed=0,
+            failed=0,
+            failures=[TestFailure(test="t", file="t.py", line=1, message="boom")],
+        )
 
 
 # ============================================================================

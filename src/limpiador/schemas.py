@@ -20,7 +20,7 @@ from __future__ import annotations
 from enum import Enum
 from typing import Any
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 
 class Schema(BaseModel):
@@ -123,10 +123,25 @@ class TestResult(Schema):
     failures: list[TestFailure] = Field(default_factory=list)
     duration_seconds: float | None = Field(default=None, ge=0)
 
+    @model_validator(mode="after")
+    def validate_failure_consistency(self) -> "TestResult":
+        """Keep the failed count and the structured failure list in agreement.
+
+        The fix loop reads ``failures`` to locate causes (ARCHITECTURE.md §8), so
+        a ``failed`` count that disagrees with the list it is meant to summarize
+        is a malformed result, not a usable one.
+        """
+        if len(self.failures) != self.failed:
+            raise ValueError(
+                f"failed={self.failed} but {len(self.failures)} structured "
+                "failure(s) were provided; the count and the list must agree."
+            )
+        return self
+
     @property
     def ok(self) -> bool:
         """True only when nothing failed — the signal that ends the fix loop."""
-        return self.failed == 0
+        return self.failed == 0 and not self.failures
 
 
 # ============================================================================
