@@ -92,6 +92,27 @@ def test_mock_records_the_inputs_it_received() -> None:
     assert mock.received[0] == ([{"role": "user", "content": "hi"}], tools)
 
 
+def test_returned_response_does_not_alias_the_stored_script() -> None:
+    """Mutating a returned response cannot corrupt the scripted turn it came from."""
+    mock = MockLLM(scenario(tool_turn(tool_call("git.status"))))
+
+    returned = mock.complete(messages=[])
+    returned.tool_calls.append(tool_call("fs.read_file"))  # frozen field, mutable list
+
+    assert len(mock._turns[0].tool_calls) == 1
+
+
+def test_received_history_is_isolated_from_later_caller_mutation() -> None:
+    """Mutating the passed messages after the call cannot rewrite recorded history."""
+    mock = MockLLM(scenario(final_turn("ok")))
+    messages = [{"role": "user", "content": "hi"}]
+
+    mock.complete(messages=messages)
+    messages.append({"role": "user", "content": "surprise"})
+
+    assert mock.received[0][0] == [{"role": "user", "content": "hi"}]
+
+
 def test_helper_produces_a_valid_llm_response_sequence() -> None:
     turns = _three_step_scenario()
 
