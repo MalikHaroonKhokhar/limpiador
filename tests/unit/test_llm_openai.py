@@ -14,10 +14,13 @@ import pathlib
 from types import SimpleNamespace
 from typing import Any
 
+import httpx
+import openai
 import pytest
 
 from limpiador.agent.llm import LLMAdapter, OpenAIAdapter
-from limpiador.observability.errors import ConfigError
+from limpiador.observability.errors import ConfigError, TransientError
+from limpiador.observability.retry import Resilience, RetryPolicy
 from limpiador.schemas import LLMResponse, ToolCall
 
 _SRC_ROOT = pathlib.Path(__file__).resolve().parents[2] / "src" / "limpiador"
@@ -139,6 +142,82 @@ def test_missing_api_key_raises_config_error_not_a_crash(monkeypatch: pytest.Mon
 
     with pytest.raises(ConfigError):
         OpenAIAdapter()  # no injected client, no key available
+
+
+# ---- resilience is applied at the adapter boundary (ARCHITECTURE.md §13) -----
+class _FakeClock:
+    """Deterministic clock for backoff/throttle: ``sleep`` advances ``now``."""
+
+    def __init__(self) -> None:
+        self.now = 0.0
+
+    def time(self) -> float:
+        return self.now
+
+    def sleep(self, seconds: float) -> None:
+        self.now += seconds
+
+
+class _FlakyClient:
+    """A client that raises a scripted sequence of errors, then returns ``ok``."""
+
+    def __init__(self, errors: list[Exception]) -> None:
+        self.calls = 0
+        self._errors = errors
+        response = _response(content="ok")
+
+        def create(**kwargs: Any) -> SimpleNamespace:
+            self.calls += 1
+            if self._errors:
+                raise self._errors.pop(0)
+            return response
+
+        self.chat = SimpleNamespace(completions=SimpleNamespace(create=create))
+
+
+def _timeout() -> openai.APITimeoutError:
+    return openai.APITimeoutError(
+        request=httpx.Request("POST", "https://api.openai.com/v1/chat/completions")
+    )
+
+
+def _fast_resilience(clock: _FakeClock, *, max_attempts: int) -> Resilience:
+    return Resilience(
+        retry=RetryPolicy(max_attempts=max_attempts, base_delay_s=0.01),
+        sleep=clock.sleep,
+        clock=clock.time,
+    )
+
+
+def test_adapter_retries_a_transient_provider_error_then_succeeds() -> None:
+    clock = _FakeClock()
+    client = _FlakyClient([_timeout(), _timeout()])
+    adapter = OpenAIAdapter(model="m", client=client, resilience=_fast_resilience(clock, max_attempts=4))
+
+    result = adapter.complete(messages=[{"role": "user", "content": "hi"}])
+
+    assert result.text == "ok"
+    assert client.calls == 3  # two transient failures, then a success
+
+
+def test_adapter_gives_up_on_persistent_transient_errors_with_a_typed_error() -> None:
+    clock = _FakeClock()
+    client = _FlakyClient([_timeout(), _timeout(), _timeout()])
+    adapter = OpenAIAdapter(model="m", client=client, resilience=_fast_resilience(clock, max_attempts=3))
+
+    with pytest.raises(TransientError):
+        adapter.complete(messages=[])
+    assert client.calls == 3  # exactly max_attempts, then a typed give-up
+
+
+def test_adapter_does_not_retry_a_non_transient_provider_error() -> None:
+    clock = _FakeClock()
+    client = _FlakyClient([ValueError("a non-transient bug")])
+    adapter = OpenAIAdapter(model="m", client=client, resilience=_fast_resilience(clock, max_attempts=5))
+
+    with pytest.raises(ValueError):
+        adapter.complete(messages=[])
+    assert client.calls == 1  # propagated straight through, never retried
 
 
 def test_openai_sdk_is_imported_only_in_the_adapter() -> None:

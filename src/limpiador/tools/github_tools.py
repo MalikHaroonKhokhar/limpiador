@@ -2,8 +2,10 @@
 
 get_issue, list_issues, create_issue, comment_issue, get_pr, list_prs,
 create_pr, review_pr, request_changes, merge_pr, list_checks, get_check_logs,
-get_file_at_ref, search_code. Backed by the real GitHub API (pygithub); external
-calls go through the retry/backoff and rate limiter (observability §13).
+get_file_at_ref, search_code. Backed by the real GitHub API (pygithub). Every
+executor routes its API call through the one resilient boundary in
+``github_client.GitHubBoundary`` — the retry/backoff and rate limiter applied in
+a single place (observability §13), not scattered across these fourteen tools.
 """
 
 from __future__ import annotations
