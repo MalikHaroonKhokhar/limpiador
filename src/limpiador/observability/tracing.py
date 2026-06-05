@@ -9,3 +9,29 @@ cost of a run is basic observability. Debt-tracker trace tags (e.g.
 ``[REGISTRY RESEARCH_RETRY]``, ``[CONTEXT REREAD]``) are emitted here so their
 frequency can be measured (.clauderules §8).
 """
+
+from __future__ import annotations
+
+import logging
+
+logger = logging.getLogger("limpiador.trace")
+
+# Debt-tracker trace tags. Counting these in a run's trace is how we measure
+# whether a known limitation fires often enough to be worth fixing (.clauderules
+# §8). ``[REGISTRY RESEARCH_RETRY]`` is ARCH_DEBT_001: the keyword ranker sent
+# the model back to ``search_tools`` instead of letting it load on the first try.
+RESEARCH_RETRY_TAG = "[REGISTRY RESEARCH_RETRY]"
+
+
+def emit(tag: str, message: str = "") -> None:
+    """Record a tagged trace event so its frequency can be counted later.
+
+    Intentionally thin: it logs through the ``limpiador.trace`` logger so a tag
+    surfaces in a run trace without any subsystem depending on a richer tracer.
+    Components that need to assert on emissions in a test inject their own
+    callable instead of reaching for this default.
+    """
+    if message:
+        logger.info("%s %s", tag, message)
+    else:
+        logger.info("%s", tag)

@@ -31,6 +31,10 @@ class MalformedInputError(ToolError):
     """The tool was called with input that fails its typed contract (schemas.py)."""
 
 
+class ToolUnavailableError(ToolError):
+    """A declared tool exists in the registry but its executor is not implemented."""
+
+
 class ConfigError(Exception):
     """A fatal configuration problem — e.g. a required key like ``OPENAI_API_KEY``
     is absent.

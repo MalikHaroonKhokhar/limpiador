@@ -839,3 +839,61 @@ class CiStatusResult(Schema):
     run_id: int = Field(ge=1)
     status: str = Field(min_length=1)
     conclusion: str | None = None
+
+
+# ============================================================================
+# Registry meta-tools — the fixed core the model always sees (ARCHITECTURE.md §5.2)
+# ============================================================================
+class ToolSummary(Schema):
+    """One ranked line ``search_tools`` returns: name + namespace + description.
+
+    Deliberately *not* a full schema. The whole point of dynamic loading is that
+    the model discovers tools cheaply (a one-liner each) and pays for a full
+    parameter schema only on the one it actually loads (ARCHITECTURE.md §5.2).
+    """
+
+    name: str = Field(min_length=1, description="Canonical '<namespace>.<tool>' name.")
+    namespace: str = Field(min_length=1, description="The tool's namespace surface.")
+    description: str = Field(min_length=1, description="One-line capability summary.")
+
+
+class SearchToolsRequest(Schema):
+    """Input to the core ``search_tools`` meta-tool: a free-text capability query.
+
+    An empty query is allowed and ranks nothing — there is nothing to rank on —
+    so the result is simply empty rather than an error (the loop can re-query).
+    """
+
+    query: str = Field(description="What capability is needed; ranked by keyword overlap.")
+    limit: int = Field(default=5, ge=1, description="Maximum summaries to return (top-k).")
+
+
+class SearchToolsResult(Schema):
+    """Ranked one-line summaries — never full schemas (ARCHITECTURE.md §5.2)."""
+
+    summaries: list[ToolSummary] = Field(default_factory=list)
+
+
+class LoadToolRequest(Schema):
+    """Input to the core ``load_tool`` meta-tool: which discovered tool to activate."""
+
+    name: str = Field(min_length=1, description="Canonical '<namespace>.<tool>' name to load.")
+
+
+class LoadToolResult(Schema):
+    """Confirmation that a tool's full schema is now in the active set."""
+
+    name: str = Field(min_length=1)
+    loaded: bool = True
+
+
+class FinishRequest(Schema):
+    """Input to the core ``finish`` meta-tool: the task's final structured result."""
+
+    result: str = Field(min_length=1, description="The final result that ends the task.")
+
+
+class FinishResult(Schema):
+    """The terminal object ``finish`` returns; its arrival ends the loop."""
+
+    result: str = Field(min_length=1)
