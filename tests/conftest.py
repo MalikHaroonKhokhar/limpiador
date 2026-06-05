@@ -7,7 +7,23 @@ the bootstrap skeleton it carries one piece of collection policy.
 
 from __future__ import annotations
 
+import sys
+from pathlib import Path
+
 import pytest
+
+# Put tests/ on the import path so the test-support layer (tests/support/) is
+# importable as `support`. The mock LLM and scenario helpers live there — never
+# under src/limpiador/ — and are injected through the LLMAdapter interface
+# (ARCHITECTURE.md §10, .clauderules §5).
+_TESTS_DIR = Path(__file__).parent
+if str(_TESTS_DIR) not in sys.path:
+    sys.path.insert(0, str(_TESTS_DIR))
+
+# Importing the test-support layer registers the mock adapter, so
+# LIMPIADOR_LLM=mock resolves to it across the whole session (the run mode the
+# Makefile sets for `make test`). Production never imports this.
+import support  # noqa: E402,F401 — registration side effect, after sys.path setup
 
 # Pytest's "no tests collected" exit code. The layered suites (tests/unit/,
 # tests/integration/) start empty in the skeleton and fill in later; an empty
