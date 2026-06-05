@@ -29,3 +29,14 @@ class TransientError(ToolError):
 
 class MalformedInputError(ToolError):
     """The tool was called with input that fails its typed contract (schemas.py)."""
+
+
+class ConfigError(Exception):
+    """A fatal configuration problem — e.g. a required key like ``OPENAI_API_KEY``
+    is absent.
+
+    Deliberately *not* a ``ToolError``: it is not an agent-recoverable failure to
+    fold back into context, but a startup misconfiguration the operator must fix.
+    Raising it (instead of crashing on a missing env var) keeps the failure typed
+    and legible.
+    """
