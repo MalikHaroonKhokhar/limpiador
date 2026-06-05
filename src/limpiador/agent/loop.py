@@ -16,7 +16,9 @@ is how a turn cycle ends, the way a function recognizes ``return``.
 
 from __future__ import annotations
 
+import copy
 import json
+import time
 from dataclasses import dataclass, field
 
 from limpiador.agent.context import (
@@ -27,6 +29,7 @@ from limpiador.agent.context import (
 from limpiador.agent.guard import CallGuard, RunAborted
 from limpiador.agent.llm import LLMAdapter, Messages
 from limpiador.observability.errors import ToolError
+from limpiador.observability.tracing import Tracer
 from limpiador.schemas import LLMResponse, ToolCall
 from limpiador.tools.registry import FINISH, ToolRegistry
 
@@ -47,6 +50,7 @@ class RunResult:
     turns: int
     tool_calls: tuple[str, ...]
     messages: list[dict[str, object]] = field(default_factory=list)
+    trace: Tracer | None = None
 
 
 def run(
@@ -57,6 +61,7 @@ def run(
     guard: CallGuard | None = None,
     system_prompt: str | None = None,
     threshold_tokens: int = DEFAULT_COMPACTION_THRESHOLD_TOKENS,
+    tracer: Tracer | None = None,
 ) -> RunResult:
     """Drive the agent loop to completion (``finish``) or a guarded abort.
 
@@ -72,11 +77,13 @@ def run(
     correctness, not latency: a deterministic in-order batch is the safe choice.
     """
     guard = guard or CallGuard()
+    tracer = tracer or Tracer()
     messages: Messages = _initial_messages(task, system_prompt)
     # Working memory (property #3, §7): the loop folds every raw tool result into
     # the context as an opaque payload and compacts when the footprint crosses the
     # threshold — never inspecting what any result *is*, so it stays tool-ignorant.
-    context = Context(task, threshold_tokens=threshold_tokens)
+    # The same tracer captures the context's tags, so the run trace is unified.
+    context = Context(task, threshold_tokens=threshold_tokens, tracer=tracer)
     dispatched: list[str] = []
     turns = 0
 
@@ -84,15 +91,15 @@ def run(
         try:
             guard.check()
         except RunAborted:
-            return RunResult(None, aborted=True, turns=turns, tool_calls=tuple(dispatched), messages=messages)
+            return RunResult(None, aborted=True, turns=turns, tool_calls=tuple(dispatched), messages=messages, trace=tracer)
 
-        response = adapter.complete(messages, tools=registry.active_schemas())
+        response = _timed_complete(adapter, messages, registry, tracer)
         turns += 1
         messages.append(_assistant_message(response))
 
         # A model turn with no tool calls is a plain answer — the run is done.
         if not response.tool_calls:
-            return RunResult(response.text, aborted=False, turns=turns, tool_calls=tuple(dispatched), messages=messages)
+            return RunResult(response.text, aborted=False, turns=turns, tool_calls=tuple(dispatched), messages=messages, trace=tracer)
 
         # Dispatch the turn's calls sequentially, in order (see the docstring on
         # parallel-vs-concurrent), folding each typed result into the transcript.
@@ -100,7 +107,7 @@ def run(
         for call in response.tool_calls:
             guard.record()
             dispatched.append(call.name)
-            message = _dispatch_one(registry, call)
+            message = _timed_dispatch(registry, call, tracer)
             messages.append(message)
             _record_payload(context, call, message)
             if call.name == FINISH and finished is None:
@@ -115,7 +122,7 @@ def run(
         _compact(context, messages)
 
         if finished is not None:
-            return RunResult(finished, aborted=False, turns=turns, tool_calls=tuple(dispatched), messages=messages)
+            return RunResult(finished, aborted=False, turns=turns, tool_calls=tuple(dispatched), messages=messages, trace=tracer)
 
 
 def _initial_messages(task: str, system_prompt: str | None) -> Messages:
@@ -163,6 +170,76 @@ def _dispatch_one(registry: ToolRegistry, call: ToolCall) -> dict[str, object]:
         "name": call.name,
         "content": content,
     }
+
+
+def _timed_complete(
+    adapter: LLMAdapter, messages: Messages, registry: ToolRegistry, tracer: Tracer
+) -> LLMResponse:
+    """Call the model, timing it and recording a structured model-call entry.
+
+    The model name, routing decision, token usage, and per-call cost ride in on
+    the normalized response (the adapter annotated them); the loop adds the
+    wall-clock latency it measured and a snapshot of the input it sent. For the
+    mock those annotations are absent, so the entry records a model turn with no
+    real model, route, or price.
+    """
+    tools = registry.active_schemas()
+    start = time.perf_counter()
+    response = adapter.complete(messages, tools=tools)
+    latency = time.perf_counter() - start
+    tracer.record_model_call(
+        model=response.model,
+        latency_s=latency,
+        input=_model_input(messages, tools),
+        output=response.text,
+        usage=response.usage,
+        route=response.route,
+        cost_usd=response.cost_usd,
+    )
+    return response
+
+
+def _model_input(messages: Messages, tools: list[dict[str, object]]) -> dict[str, object]:
+    """A snapshot of what the model was sent this turn: the messages and the tools.
+
+    The messages are deep-copied because the live transcript keeps growing — and
+    is rewritten in place by compaction — so a reference would later read as the
+    final state, not what *this* turn actually saw. The tool schemas are freshly
+    built each turn by the registry, so they need no copy.
+    """
+    return {"messages": copy.deepcopy(messages), "tools": tools}
+
+
+def _timed_dispatch(registry: ToolRegistry, call: ToolCall, tracer: Tracer) -> dict[str, object]:
+    """Dispatch one tool call, timing it and recording a structured tool-call entry.
+
+    The folded message is returned unchanged for the transcript; the trace entry
+    captures the call's input, its output, and — when the call failed and was
+    folded as recoverable — the error kind, so the trace tells the whole story.
+    """
+    start = time.perf_counter()
+    message = _dispatch_one(registry, call)
+    latency = time.perf_counter() - start
+    content = str(message["content"])
+    tracer.record_tool_call(
+        tool=call.name,
+        latency_s=latency,
+        input=call.arguments,
+        output=content,
+        error=_error_kind(content),
+    )
+    return message
+
+
+def _error_kind(content: str) -> str | None:
+    """The error type from a folded error result, or None for a normal result."""
+    try:
+        parsed = json.loads(content)
+    except (ValueError, TypeError):
+        return None
+    if isinstance(parsed, dict) and "error" in parsed:
+        return str(parsed["error"])
+    return None
 
 
 def _record_payload(context: Context, call: ToolCall, message: dict[str, object]) -> None:
