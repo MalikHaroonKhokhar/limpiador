@@ -219,7 +219,7 @@ dev-mock:
 	@test -n "$(TASK)" || (echo "❌ Error: TASK not specified." && \
 		echo "Usage: make dev-mock REPO=. TASK=\"...\"" && exit 1)
 	@echo "🧪 Running limpiador (MOCK mode, free) on $(REPO)..."
-	@$(MOCK_ENV) $(PYTHON) -m limpiador.cli run --repo "$(REPO)" --task "$(TASK)"
+	@PYTHONPATH=tests $(MOCK_ENV) $(PYTHON) -m support run --repo "$(REPO)" --task "$(TASK)"
 
 demo:
 	@echo "🎬 Running scripted demo scenario..."
