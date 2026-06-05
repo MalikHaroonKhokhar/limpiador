@@ -16,12 +16,13 @@ created, not a runtime surprise.
 
 from __future__ import annotations
 
+import re
 from abc import ABC, abstractmethod
 from typing import ClassVar
 
 from pydantic import ValidationError
 
-from limpiador.observability.errors import MalformedInputError
+from limpiador.observability.errors import MalformedInputError, ToolUnavailableError
 from limpiador.schemas import Schema
 
 # The enforced namespaces. ``git/github/fs/ast/test`` are the five surfaces the
@@ -35,6 +36,51 @@ NAMESPACES: tuple[str, ...] = ("git", "github", "fs", "ast", "test", "ci")
 # transform never needs to be reversed by string-parsing.
 _NAME_SEPARATOR = "."
 _OPENAI_NAME_SEPARATOR = "_"
+
+
+def openai_function_schema(
+    name: str, description: str, params: type[Schema]
+) -> dict[str, object]:
+    """Emit one OpenAI function-calling schema from a name, description, and model.
+
+    Shared by both the namespaced tools (:meth:`Tool.openai_schema`) and the
+    registry's core meta-tools, so the wire shape is defined in exactly one place.
+    The parameters are the input model's JSON schema, which carries the strict
+    ``additionalProperties: false`` from :class:`Schema`.
+    """
+    return {
+        "type": "function",
+        "function": {
+            "name": name,
+            "description": description,
+            "parameters": params.model_json_schema(),
+        },
+    }
+
+
+def declared_tool(
+    name: str,
+    description: str,
+    input_model: type[Schema],
+    output_model: type[Schema],
+) -> Tool:
+    """Create a registered capability shell with typed I/O and no executor yet."""
+
+    def run(self: Tool, request: Schema) -> Schema:
+        raise ToolUnavailableError(f"{self.name} is declared but not implemented.")
+
+    cls = type(
+        _class_name(name),
+        (Tool,),
+        {
+            "name": name,
+            "description": description,
+            "Input": input_model,
+            "Output": output_model,
+            "run": run,
+        },
+    )
+    return cls()
 
 
 class Tool(ABC):
@@ -76,14 +122,7 @@ class Tool(ABC):
         The parameters are the input model's JSON schema, which carries the
         strict ``additionalProperties: false`` from :class:`Schema`.
         """
-        return {
-            "type": "function",
-            "function": {
-                "name": cls.openai_name(),
-                "description": cls.description,
-                "parameters": cls.Input.model_json_schema(),
-            },
-        }
+        return openai_function_schema(cls.openai_name(), cls.description, cls.Input)
 
     def invoke(self, request: Schema | dict[str, object]) -> Schema:
         """Run the tool with its I/O contract enforced at call time.
@@ -166,3 +205,8 @@ def _require_typed_io(cls: type[Tool]) -> None:
             raise ValueError(
                 f"Tool {cls.name!r} must set {attribute} to a limpiador Schema subclass."
             )
+
+
+def _class_name(tool_name: str) -> str:
+    """Convert ``namespace.tool_name`` into a stable generated class name."""
+    return "".join(part.title() for part in re.split(r"[^a-zA-Z0-9]+", tool_name))
