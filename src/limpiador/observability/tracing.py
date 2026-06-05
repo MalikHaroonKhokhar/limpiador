@@ -28,6 +28,12 @@ RESEARCH_RETRY_TAG = "[REGISTRY RESEARCH_RETRY]"
 # learn whether re-reads stay rare enough to leave that mitigation as-is.
 CONTEXT_REREAD_TAG = "[CONTEXT REREAD]"
 
+# ``[ROUTING]`` is an observability tag, not a debt one: every model call records
+# which turn kind it was, which model served it, and the stable-prefix fingerprint
+# that prompt caching keys on. Counting these is how a run shows the bulk of calls
+# went to the cheap model and that the cached head stayed stable across turns.
+ROUTING_TAG = "[ROUTING]"
+
 
 def emit(tag: str, message: str = "") -> None:
     """Record a tagged trace event so its frequency can be counted later.

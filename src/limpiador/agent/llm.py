@@ -15,26 +15,142 @@ configuration to be verified against current pricing, never hard-coded.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 from abc import ABC, abstractmethod
 from collections.abc import Callable
+from dataclasses import dataclass
+from enum import Enum
 from typing import Any
 
 import openai
 
 from limpiador.observability.errors import ConfigError
+from limpiador.observability.tracing import ROUTING_TAG, emit
 from limpiador.schemas import LLMResponse, TokenUsage, ToolCall
+from limpiador.tools.registry import CORE_TOOL_NAMES
 
-# Configuration, not literals (CLEAN_CODE.md §7): the key env var, the model
-# override env var, and the cheap default model. The default is a starting
-# point to verify against current pricing (ARCHITECTURE.md §10), not a fact.
+# Configuration, not literals (CLEAN_CODE.md §7): the key env var and the model
+# override env var.
 _API_KEY_ENV = "OPENAI_API_KEY"
 # Public: the env var that overrides the model. The CLI's --model flag sets it,
 # so the override flows through the registration seam without the CLI importing
-# any concrete adapter (it sets documented config, not provider internals).
+# any concrete adapter (it sets documented config, not provider internals). When
+# set it *pins* one model for every turn, bypassing routing.
 OPENAI_MODEL_ENV = "LIMPIADOR_OPENAI_MODEL"
-_DEFAULT_MODEL = "gpt-4o-mini"
+
+# The tracer the adapter records routing decisions through: ``(tag, message)``,
+# matching :func:`limpiador.observability.tracing.emit`.
+Tracer = Callable[[str, str], None]
+
+
+# ---- Model routing (cheap-by-default, escalate-for-reasoning) ----------------
+# ARCHITECTURE.md §10: the bulk of a long run is mechanical tool dispatch, which
+# the cheap model handles; the reasoning-heavy turns (planning and synthesis)
+# escalate to the strong model. Model names *and prices* are named config — to be
+# verified against current OpenAI pricing, never treated as hard facts — so the
+# whole policy is retuned by editing config or injecting a RoutingConfig.
+
+
+class TurnKind(str, Enum):
+    """What a model turn is for — the signal routing keys on."""
+
+    PLANNING = "planning"  # reasoning-heavy: forming the approach, or synthesizing
+    DISPATCH = "dispatch"  # mechanical: selecting and calling tools
+
+
+@dataclass(frozen=True)
+class ModelTier:
+    """A model and its current price (USD per million tokens), as configuration.
+
+    The prices are observability metadata — they let a run report what it spent —
+    and must be verified against current OpenAI pricing, not trusted as facts.
+    """
+
+    name: str
+    input_usd_per_million: float
+    output_usd_per_million: float
+
+
+@dataclass(frozen=True)
+class RoutingConfig:
+    """Which model serves each turn kind. Swap the tiers to retune, no code change."""
+
+    strong: ModelTier
+    cheap: ModelTier
+
+    def tier_for(self, kind: TurnKind) -> ModelTier:
+        """Dispatch turns take the cheap model; everything else escalates."""
+        return self.cheap if kind is TurnKind.DISPATCH else self.strong
+
+
+# Default routing. Prices are a starting point to verify against current OpenAI
+# pricing (ARCHITECTURE.md §10), never a fact baked into code.
+DEFAULT_ROUTING = RoutingConfig(
+    strong=ModelTier("gpt-4o", input_usd_per_million=2.50, output_usd_per_million=10.00),
+    cheap=ModelTier("gpt-4o-mini", input_usd_per_million=0.15, output_usd_per_million=0.60),
+)
+
+
+def classify_turn(messages: "Messages") -> TurnKind:
+    """Read the turn's purpose from the transcript shape (ARCHITECTURE.md §10).
+
+    Before any tool result exists, the model is forming its approach — planning,
+    the reasoning-heavy work that earns the strong model (final synthesis is the
+    same shape of reasoning). Once tool results are in hand, each turn is
+    mechanical tool selection — dispatch — and the cheap model serves it. Because
+    a long run is mostly dispatch, the bulk of calls stay cheap.
+    """
+    has_tool_result = any(m.get("role") == "tool" for m in messages)
+    return TurnKind.DISPATCH if has_tool_result else TurnKind.PLANNING
+
+
+def cache_prefix(
+    messages: "Messages",
+    tools: "ToolSchemas | None",
+    *,
+    core_tool_names: tuple[str, ...] = CORE_TOOL_NAMES,
+) -> dict[str, Any]:
+    """The byte-stable request head the provider's prompt cache reuses.
+
+    It is exactly the part that does not change as a run proceeds: the system
+    instruction and the always-present core tool schemas. The volatile
+    conversation tail (user/assistant/tool messages) and any dynamically loaded
+    tool schemas are excluded, so this head stays identical turn after turn and
+    the cache keeps hitting.
+    """
+    system = [m for m in messages if m.get("role") == "system"]
+    core = [t for t in (tools or []) if _schema_name(t) in core_tool_names]
+    return {"system": system, "core_tools": core}
+
+
+def prefix_fingerprint(
+    messages: "Messages",
+    tools: "ToolSchemas | None",
+    *,
+    core_tool_names: tuple[str, ...] = CORE_TOOL_NAMES,
+) -> str:
+    """A stable fingerprint of the cacheable prefix.
+
+    Serialized with sorted keys and no whitespace, so "the same prefix" means
+    byte-identical bytes — never a dict-ordering accident that would silently
+    miss the cache. Recorded in the trace so prefix stability is observable.
+    """
+    canonical = json.dumps(
+        cache_prefix(messages, tools, core_tool_names=core_tool_names),
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+
+def _schema_name(schema: dict[str, Any]) -> str:
+    """The function name out of an OpenAI flat tool schema, or '' if malformed."""
+    function = schema.get("function")
+    if isinstance(function, dict):
+        return str(function.get("name", ""))
+    return ""
 
 # The agent core speaks these shapes; provider types never cross this boundary.
 Messages = list[dict[str, Any]]
@@ -114,8 +230,14 @@ class OpenAIAdapter(LLMAdapter):
         api_key: str | None = None,
         model: str | None = None,
         client: Any | None = None,
+        routing: RoutingConfig | None = None,
+        tracer: Tracer = emit,
     ) -> None:
-        self._model = model or os.environ.get(OPENAI_MODEL_ENV) or _DEFAULT_MODEL
+        # An explicit model (flag or env) pins one model for every turn, bypassing
+        # routing — the operator's escape hatch. Otherwise routing decides per turn.
+        self._pinned_model = model or os.environ.get(OPENAI_MODEL_ENV) or None
+        self._routing = routing or DEFAULT_ROUTING
+        self._trace = tracer
         self._client = client if client is not None else self._build_client(api_key)
 
     @staticmethod
@@ -130,11 +252,21 @@ class OpenAIAdapter(LLMAdapter):
         return openai.OpenAI(api_key=key)
 
     def complete(self, messages: Messages, tools: ToolSchemas | None = None) -> LLMResponse:
-        request: dict[str, Any] = {"model": self._model, "messages": messages}
+        kind = classify_turn(messages)
+        model = self._pinned_model or self._routing.tier_for(kind).name
+        self._record_routing(kind, model, messages, tools)
+        request: dict[str, Any] = {"model": model, "messages": messages}
         if tools:
             request["tools"] = tools
         response = self._client.chat.completions.create(**request)
         return self._parse_response(response)
+
+    def _record_routing(
+        self, kind: TurnKind, model: str, messages: Messages, tools: ToolSchemas | None
+    ) -> None:
+        """Record the routing decision and the stable-prefix fingerprint in the trace."""
+        fingerprint = prefix_fingerprint(messages, tools)
+        self._trace(ROUTING_TAG, f"{kind.value} -> {model} (stable-prefix {fingerprint[:12]})")
 
     def _parse_response(self, response: Any) -> LLMResponse:
         """Normalize a provider response into a typed LLMResponse."""
