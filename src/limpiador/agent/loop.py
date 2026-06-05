@@ -19,6 +19,11 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass, field
 
+from limpiador.agent.context import (
+    DEFAULT_COMPACTION_THRESHOLD_TOKENS,
+    Context,
+    PayloadKind,
+)
 from limpiador.agent.guard import CallGuard, RunAborted
 from limpiador.agent.llm import LLMAdapter, Messages
 from limpiador.observability.errors import ToolError
@@ -51,6 +56,7 @@ def run(
     adapter: LLMAdapter,
     guard: CallGuard | None = None,
     system_prompt: str | None = None,
+    threshold_tokens: int = DEFAULT_COMPACTION_THRESHOLD_TOKENS,
 ) -> RunResult:
     """Drive the agent loop to completion (``finish``) or a guarded abort.
 
@@ -67,6 +73,10 @@ def run(
     """
     guard = guard or CallGuard()
     messages: Messages = _initial_messages(task, system_prompt)
+    # Working memory (property #3, §7): the loop folds every raw tool result into
+    # the context as an opaque payload and compacts when the footprint crosses the
+    # threshold — never inspecting what any result *is*, so it stays tool-ignorant.
+    context = Context(task, threshold_tokens=threshold_tokens)
     dispatched: list[str] = []
     turns = 0
 
@@ -90,15 +100,19 @@ def run(
         for call in response.tool_calls:
             guard.record()
             dispatched.append(call.name)
-            messages.append(_dispatch_one(registry, call))
+            message = _dispatch_one(registry, call)
+            messages.append(message)
+            _record_payload(context, call, message)
             if call.name == FINISH and finished is None:
-                finished = _finish_text(messages[-1])
+                finished = _finish_text(message)
 
-        # Step 5 of §6 is "fold and compact". Folding happens above; compaction is
-        # deliberately out of scope here — it is property #3 (§7), built in its
-        # own ticket against the Context object (context.py). This is its seam:
-        # when the transcript's token footprint crosses the threshold, the
-        # eviction strategy runs here. Until then the loop is "fold now".
+        # Step 5 of §6 is "fold and compact". Folding happens above; this is the
+        # compact half — property #3 (§7), now live. When the working set's
+        # footprint crosses the threshold, the context summarizes-then-evicts the
+        # stale raw payloads, and we sync those summaries back into the wire
+        # transcript so the next model call carries the gist, not the bulk. A run
+        # below threshold compacts nothing, so short runs are untouched.
+        _compact(context, messages)
 
         if finished is not None:
             return RunResult(finished, aborted=False, turns=turns, tool_calls=tuple(dispatched), messages=messages)
@@ -149,6 +163,40 @@ def _dispatch_one(registry: ToolRegistry, call: ToolCall) -> dict[str, object]:
         "name": call.name,
         "content": content,
     }
+
+
+def _record_payload(context: Context, call: ToolCall, message: dict[str, object]) -> None:
+    """Fold a tool result into working memory as an opaque, evictable payload.
+
+    Keyed by the call id so its summary can later be synced back onto the exact
+    wire message. The kind is ``RESULT`` — the loop does not, and must not, know
+    whether the result is a file, a diff, or a log; that classification belongs to
+    a tool-aware layer, not the tool-ignorant spine.
+    """
+    content = str(message["content"])
+    context.record_payload(
+        call.id,
+        content,
+        kind=PayloadKind.RESULT,
+        summary=f"[{call.name}] result elided after compaction ({len(content)} chars).",
+    )
+
+
+def _compact(context: Context, messages: Messages) -> None:
+    """Compact working memory and mirror any eviction onto the wire transcript.
+
+    The context decides *what* to evict (stale, unpinned, not the most recent);
+    here we keep the OpenAI transcript valid by replacing only the evicted tool
+    messages' content with their summary — the assistant/tool pairing and ids are
+    untouched, so the next call is well-formed but lighter.
+    """
+    result = context.compact()
+    if not result.evicted:
+        return
+    by_id = {m.get("tool_call_id"): m for m in messages if m.get("role") == "tool"}
+    for payload in context.payloads:
+        if payload.evicted and payload.key in by_id:
+            by_id[payload.key]["content"] = payload.summary
 
 
 def _finish_text(tool_message: dict[str, object]) -> str:

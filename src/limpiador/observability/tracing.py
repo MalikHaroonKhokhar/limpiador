@@ -22,6 +22,12 @@ logger = logging.getLogger("limpiador.trace")
 # the model back to ``search_tools`` instead of letting it load on the first try.
 RESEARCH_RETRY_TAG = "[REGISTRY RESEARCH_RETRY]"
 
+# ``[CONTEXT REREAD]`` is ARCH_DEBT_002: a file was read twice in one run — the
+# signal that summarize-then-evict dropped a raw payload the agent later needed.
+# Keeping symbol facts durable is the mitigation; counting this tag is how we
+# learn whether re-reads stay rare enough to leave that mitigation as-is.
+CONTEXT_REREAD_TAG = "[CONTEXT REREAD]"
+
 
 def emit(tag: str, message: str = "") -> None:
     """Record a tagged trace event so its frequency can be counted later.
