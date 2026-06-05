@@ -175,6 +175,36 @@ class ToolRegistry:
         self._last_was_search = False
         return FinishResult(result=req.result)
 
+    # ---- dispatch: route one tool call to its handler (the loop's seam) -----
+    def dispatch(self, name: str, arguments: dict[str, object] | Schema) -> Schema:
+        """Route a tool call (by its OpenAI-safe name) to a handler and invoke it.
+
+        The three core meta-tools are dispatched by their fixed protocol names;
+        every other call routes to a *loaded* namespaced tool by its OpenAI-safe
+        name. This is the registry's single seam for the loop: the loop hands over
+        a name and arguments and never has to know which concrete tool runs. A
+        name matching no core verb and no loaded tool is a recoverable
+        :class:`NotFoundError` (the model called something it never loaded), folded
+        back into context by the loop rather than crashing the run.
+        """
+        if name == SEARCH_TOOLS:
+            return self.search(arguments)
+        if name == LOAD_TOOL:
+            return self.load(arguments)
+        if name == FINISH:
+            return self.finish(arguments)
+        return self._loaded_tool(name).invoke(arguments)
+
+    def _loaded_tool(self, openai_name: str) -> Tool:
+        """Resolve a loaded namespaced tool by its OpenAI-safe name, or raise."""
+        for name in self._loaded:
+            tool = self._tools[name]
+            if tool.openai_name() == openai_name:
+                return tool
+        raise NotFoundError(
+            f"Tool {openai_name!r} is not loaded; load it with load_tool before calling it."
+        )
+
     # ---- what the loop hands the adapter each turn --------------------------
     def active_schemas(self) -> list[dict[str, object]]:
         """The OpenAI schemas the model sees this turn: core + loaded, nothing more.
