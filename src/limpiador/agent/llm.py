@@ -30,7 +30,10 @@ from limpiador.schemas import LLMResponse, TokenUsage, ToolCall
 # override env var, and the cheap default model. The default is a starting
 # point to verify against current pricing (ARCHITECTURE.md §10), not a fact.
 _API_KEY_ENV = "OPENAI_API_KEY"
-_MODEL_ENV = "LIMPIADOR_OPENAI_MODEL"
+# Public: the env var that overrides the model. The CLI's --model flag sets it,
+# so the override flows through the registration seam without the CLI importing
+# any concrete adapter (it sets documented config, not provider internals).
+OPENAI_MODEL_ENV = "LIMPIADOR_OPENAI_MODEL"
 _DEFAULT_MODEL = "gpt-4o-mini"
 
 # The agent core speaks these shapes; provider types never cross this boundary.
@@ -112,7 +115,7 @@ class OpenAIAdapter(LLMAdapter):
         model: str | None = None,
         client: Any | None = None,
     ) -> None:
-        self._model = model or os.environ.get(_MODEL_ENV) or _DEFAULT_MODEL
+        self._model = model or os.environ.get(OPENAI_MODEL_ENV) or _DEFAULT_MODEL
         self._client = client if client is not None else self._build_client(api_key)
 
     @staticmethod
