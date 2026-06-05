@@ -14,6 +14,7 @@ glance; :class:`MockLLM` replays it one turn per ``complete()`` call.
 
 from __future__ import annotations
 
+import copy
 from typing import Any
 
 from limpiador.agent.llm import LLMAdapter, Messages, ToolSchemas, register_adapter
@@ -58,12 +59,17 @@ class MockLLM(LLMAdapter):
     """Replays a scripted scenario, one turn per ``complete()`` call, in order."""
 
     def __init__(self, turns: list[LLMResponse]) -> None:
-        self._turns = list(turns)
+        # Snapshot the script into an immutable tuple of independent copies, so a
+        # caller mutating the turns it passed in — or the nested tool_call lists
+        # inside them — cannot change what the mock later replays.
+        self._turns: tuple[LLMResponse, ...] = tuple(turn.model_copy(deep=True) for turn in turns)
         self._index = 0
         self.received: list[tuple[Messages, ToolSchemas | None]] = []
 
     def complete(self, messages: Messages, tools: ToolSchemas | None = None) -> LLMResponse:
-        self.received.append((messages, tools))
+        # Record a snapshot, not the caller's live objects, so mutating the passed
+        # messages/tools after the call cannot rewrite recorded history.
+        self.received.append((copy.deepcopy(messages), copy.deepcopy(tools)))
         if self._index >= len(self._turns):
             raise MockExhaustedError(
                 f"scenario has {len(self._turns)} turn(s) but complete() was called "
@@ -71,7 +77,9 @@ class MockLLM(LLMAdapter):
             )
         response = self._turns[self._index]
         self._index += 1
-        return response
+        # Hand back an independent copy so a caller mutating the response cannot
+        # corrupt the stored script.
+        return response.model_copy(deep=True)
 
 
 def _build_default_mock() -> MockLLM:
