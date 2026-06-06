@@ -34,6 +34,7 @@ from limpiador.schemas import (
     GitCommitResult,
     GitDiffResult,
     GitLogResult,
+    GitPushResult,
     GitResetResult,
     GitShowResult,
     GitStageResult,
@@ -56,6 +57,7 @@ _GIT_TOOL_NAMES = (
     "git.commit",
     "git.reset",
     "git.stash",
+    "git.push",
     "git.blame",
 )
 
@@ -283,6 +285,37 @@ def test_blame_honors_a_line_range(seeded_repo) -> None:
     assert [line.content for line in result.lines] == ["two", "three"]
 
 
+def test_push_sends_the_branch_to_a_remote(seeded_repo) -> None:
+    # A bare repo stands in for the remote (no network); the seeded repo pushes
+    # its branch to it and the remote ends up pointing at the same commit.
+    remote_path = _repo_path(seeded_repo) / "remote.git"
+    Repo.init(remote_path, bare=True)
+    seeded_repo.create_remote("origin", str(remote_path))
+    branch = seeded_repo.active_branch.name
+
+    result = _tool("git.push").invoke(
+        {"remote": "origin", "branch": branch, "set_upstream": True}
+    )
+
+    assert isinstance(result, GitPushResult)
+    assert result.remote == "origin"
+    assert result.branch == branch
+    assert result.pushed is True
+    remote = Repo(remote_path)
+    assert branch in [head.name for head in remote.heads]
+    assert remote.heads[branch].commit.hexsha == seeded_repo.head.commit.hexsha
+
+
+def test_push_defaults_to_the_current_branch(seeded_repo) -> None:
+    remote_path = _repo_path(seeded_repo) / "remote.git"
+    Repo.init(remote_path, bare=True)
+    seeded_repo.create_remote("origin", str(remote_path))
+
+    result = _tool("git.push").invoke({"remote": "origin", "set_upstream": True})
+
+    assert result.branch == seeded_repo.active_branch.name
+
+
 # ---- failure paths: each tool raises the correct typed error -----------------
 def test_status_outside_a_repo_raises_not_found(not_a_repo) -> None:
     with pytest.raises(NotFoundError):
@@ -344,6 +377,11 @@ def test_blame_missing_file_raises_not_found(seeded_repo) -> None:
         _tool("git.blame").invoke({"file": "missing.py"})
 
 
+def test_push_to_an_unknown_remote_raises_not_found(seeded_repo) -> None:
+    with pytest.raises(NotFoundError):
+        _tool("git.push").invoke({"remote": "no-such-remote"})
+
+
 def test_every_failure_is_a_recoverable_tool_error(not_a_repo) -> None:
     # A failing git tool surfaces a ToolError the loop can fold back into context,
     # not a raw gitpython exception that would crash the run.
@@ -359,7 +397,7 @@ def _fresh_registry() -> ToolRegistry:
     return registry
 
 
-def test_namespace_exposes_exactly_the_twelve_tools() -> None:
+def test_namespace_exposes_exactly_the_thirteen_tools() -> None:
     assert tuple(tool.name for tool in git_tools.TOOLS) == _GIT_TOOL_NAMES
 
 

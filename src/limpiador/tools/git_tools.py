@@ -1,12 +1,14 @@
-"""``git.*`` namespace — local repository state (ARCHITECTURE.md §5.3, 12 tools).
+"""``git.*`` namespace — local repository state + publishing (ARCHITECTURE.md §5.3, 13 tools).
 
 status, diff, log, show, branch_list, branch_create, checkout, stage, commit,
-reset, stash, blame. Backed by real git (gitpython); each tool emits a typed
-object from :mod:`limpiador.schemas` and raises a typed ``ToolError`` on failure.
+reset, stash, push, blame. Backed by real git (gitpython); each tool emits a
+typed object from :mod:`limpiador.schemas` and raises a typed ``ToolError`` on
+failure. ``push`` is the one that reaches a remote — it is what lets the agent
+publish a branch so a pull request can be opened against it.
 
 The request schemas carry no repository path: a git tool resolves the repo
 *ambiently* from the current working directory (``_open_repo``), the same way a
-person running ``git`` in a checkout does. That is what lets the twelve stay
+person running ``git`` in a checkout does. That is what lets the thirteen stay
 module-level singletons registered once at import — the CLI anchors the agent to
 ``--repo`` by running there, and every tool then operates on that one checkout.
 
@@ -50,6 +52,8 @@ from limpiador.schemas import (
     GitDiffResult,
     GitLogRequest,
     GitLogResult,
+    GitPushRequest,
+    GitPushResult,
     GitResetRequest,
     GitResetResult,
     GitShowRequest,
@@ -120,7 +124,7 @@ def _names_only(repo: Repo, *args: str) -> list[str]:
     return [line for line in output.splitlines() if line]
 
 
-# ---- the twelve tools -------------------------------------------------------
+# ---- the thirteen tools -------------------------------------------------------
 class GitStatus(Tool):
     name = "git.status"
     description = (
@@ -324,6 +328,26 @@ class GitStash(Tool):
         return GitStashResult(stash_ref="stash@{0}" if created else None, popped=False)
 
 
+class GitPush(Tool):
+    name = "git.push"
+    description = (
+        "Push a local branch to a remote, optionally setting upstream or forcing. "
+        "Synonyms: publish, upload, send to remote, git push, push branch, share."
+    )
+    Input = GitPushRequest
+    Output = GitPushResult
+
+    def run(self, request: GitPushRequest) -> GitPushResult:
+        repo = _open_repo()
+        branch = request.branch or _current_ref(repo)
+        flags = (["--set-upstream"] if request.set_upstream else []) + (
+            ["--force"] if request.force else []
+        )
+        with _translating(f"cannot push {branch!r} to {request.remote!r}"):
+            repo.git.push(*flags, request.remote, branch)
+        return GitPushResult(remote=request.remote, branch=branch, pushed=True)
+
+
 class GitBlame(Tool):
     name = "git.blame"
     description = (
@@ -385,5 +409,6 @@ TOOLS = (
     GitCommit(),
     GitReset(),
     GitStash(),
+    GitPush(),
     GitBlame(),
 )
