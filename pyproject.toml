@@ -56,4 +56,5 @@ testpaths = ["tests"]
 addopts = "--strict-markers -ra"
 markers = [
   "e2e: real-mode end-to-end test (REAL OpenAI + REAL git/github on a throwaway repo); deselect with -m 'not e2e'",
+  "reproduce: real-model reproduction test — one per observed behavior, TDD red→green; skipped without OPENAI_API_KEY",
 ]

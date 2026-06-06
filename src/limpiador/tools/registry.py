@@ -292,8 +292,20 @@ def _install_declared_tools(registry: ToolRegistry) -> None:
             registry.register(tool)
 
 
+def build_registry() -> ToolRegistry:
+    """A fresh registry populated with every declared tool — the agent's full menu.
+
+    The application :data:`REGISTRY` is one of these. A caller that needs an
+    *isolated* full registry (a reproduction run that should not inherit another
+    run's loaded-tool state, say) builds its own with this rather than sharing the
+    module singleton.
+    """
+    registry = ToolRegistry()
+    _install_declared_tools(registry)
+    return registry
+
+
 # The default application registry: the core meta-tools plus all fifty-six
 # declared tools, registered at import. Tests build their own isolated
 # ToolRegistry instances; this is the one the agent loop runs against.
-REGISTRY = ToolRegistry()
-_install_declared_tools(REGISTRY)
+REGISTRY = build_registry()
