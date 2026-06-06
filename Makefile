@@ -1,6 +1,6 @@
 .PHONY: help test test-unit test-integration test-e2e test-reproduce eval \
         test-all test-coverage test-coverage-report test-fast test-failed \
-        test-specific test-e2e-check run dev-mock demo clean install setup verify
+        test-specific test-e2e-check run run-sandbox dev-mock demo clean install setup verify
 
 # ============================================================================
 # Virtual Environment Setup
@@ -221,6 +221,30 @@ run:
 		echo "Usage: make run REPO=. TASK=\"fix the failing test\"" && exit 1)
 	@echo "🚀 Running limpiador (REAL mode) on $(REPO)..."
 	@$(REAL_ENV) $(PYTHON) -m limpiador.cli run --repo "$(REPO)" --task "$(TASK)"
+
+# The default tool-call ceiling for a sandbox run (override: MAX_CALLS=40).
+MAX_CALLS ?= 30
+
+# Run the agent against the THROWAWAY sandbox repo (from LIMPIADOR_SANDBOX_REPO),
+# without needing REPO: it clones the sandbox into a temp dir and runs there, so
+# pushes and PRs land on the throwaway, never a real repo. Real mode — costs
+# credits. Usage: make run-sandbox TASK="add a test file and open a PR"
+run-sandbox:
+	@test -n "$(TASK)" || (echo "❌ Error: TASK not specified." && \
+		echo "Usage: make run-sandbox TASK=\"add a test file and open a PR\"" && exit 1)
+	@test -n "$$LIMPIADOR_SANDBOX_REPO" || (echo "❌ LIMPIADOR_SANDBOX_REPO not set (the throwaway repo)." && exit 1)
+	@test -n "$$GITHUB_TOKEN" || (echo "❌ GITHUB_TOKEN not set." && exit 1)
+	@test -n "$$OPENAI_API_KEY" || (echo "❌ OPENAI_API_KEY not set." && exit 1)
+	@echo "🧪 Running limpiador (REAL mode) against the SANDBOX: $$LIMPIADOR_SANDBOX_REPO"
+	@set -e; \
+	  work=$$(mktemp -d /tmp/limpiador-sandbox.XXXXXX); \
+	  echo "   cloning $$LIMPIADOR_SANDBOX_REPO into $$work/repo ..."; \
+	  git clone -q "https://x-access-token:$$GITHUB_TOKEN@github.com/$$LIMPIADOR_SANDBOX_REPO.git" "$$work/repo"; \
+	  git -C "$$work/repo" config user.name "limpiador agent"; \
+	  git -C "$$work/repo" config user.email "agent@limpiador.local"; \
+	  $(REAL_ENV) GITHUB_REPOSITORY="$$LIMPIADOR_SANDBOX_REPO" \
+	    $(PYTHON) -m limpiador.cli run --repo "$$work/repo" --task "$(TASK)" --max-calls $(MAX_CALLS); \
+	  echo "   (agent's checkout left at $$work/repo for inspection — rm -rf when done)"
 
 dev-mock:
 	@test -n "$(REPO)" || (echo "❌ Error: REPO not specified." && \
