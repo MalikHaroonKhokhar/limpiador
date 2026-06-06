@@ -376,14 +376,14 @@ def test_a_declared_tool_loads_with_a_valid_openai_schema() -> None:
 
 def test_invoking_a_declared_but_unimplemented_tool_raises_a_typed_error() -> None:
     from limpiador.observability.errors import ToolError, ToolUnavailableError
-    from limpiador.schemas import GithubListIssuesRequest
-    from limpiador.tools import github_tools
+    from limpiador.schemas import AstParseFileRequest
+    from limpiador.tools import ast_tools
 
     declared = next(
-        tool for tool in github_tools.TOOLS if tool.name == "github.list_issues"
+        tool for tool in ast_tools.TOOLS if tool.name == "ast.parse_file"
     )
     with pytest.raises(ToolUnavailableError) as caught:
-        declared.invoke(GithubListIssuesRequest())
+        declared.invoke(AstParseFileRequest(file="x.py"))
     # It is a recoverable ToolError, so the loop can fold it back into context
     # rather than crashing on an unimplemented capability.
     assert isinstance(caught.value, ToolError)
