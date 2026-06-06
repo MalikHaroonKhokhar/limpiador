@@ -57,3 +57,45 @@ def test_max_calls_must_be_an_integer() -> None:
     with pytest.raises(SystemExit) as exit_info:
         build_parser().parse_args(["run", "--repo", ".", "--task", "t", "--max-calls", "lots"])
     assert exit_info.value.code != 0
+
+
+def test_run_anchors_the_agent_in_the_target_repo(tmp_path, monkeypatch, make_loaded_registry, mock_adapter) -> None:
+    """The CLI must run *in* --repo: the git/fs/ast tools resolve the repo
+    ambiently from the working directory (§5.3), so a tool dispatched during the
+    run must see --repo as its cwd — not wherever limpiador was launched from."""
+    from pathlib import Path
+
+    from limpiador.schemas import Schema
+    from limpiador.tools.base import Tool
+
+    target = tmp_path / "target"
+    target.mkdir()
+    monkeypatch.chdir(tmp_path)  # launch from elsewhere; teardown restores the cwd
+
+    seen: list[Path] = []
+
+    class _NoIn(Schema):
+        pass
+
+    class _Where(Schema):
+        cwd: str
+
+    def _probe(self: Tool, request: _NoIn) -> _Where:
+        seen.append(Path.cwd())
+        return _Where(cwd=str(Path.cwd()))
+
+    probe = type(
+        "CwdProbe",
+        (Tool,),
+        {"name": "git.status", "description": "probe the cwd", "Input": _NoIn, "Output": _Where, "run": _probe},
+    )()
+    registry = make_loaded_registry(probe)
+    mock = mock_adapter.build(
+        mock_adapter.tool_turn(mock_adapter.tool_call("git_status")),
+        mock_adapter.tool_turn(mock_adapter.tool_call("finish", {"result": "done"})),
+    )
+
+    code = main(["run", "--repo", str(target), "--task", "t"], adapter=mock, registry=registry)
+
+    assert code == 0
+    assert seen and seen[0] == target.resolve()
