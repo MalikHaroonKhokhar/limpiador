@@ -127,10 +127,11 @@ def _run(
 def _system_prompt(repo: Path) -> str:
     """The standing instruction that anchors the agent to the target repository.
 
-    Beyond anchoring, it encodes the two safe-work habits the reproduction tier
+    Beyond anchoring, it encodes the safe-work habits the reproduction tier
     pinned (tests/reproduce/): resolve a symbol's references *before* renaming or
-    removing it, so every call site is changed and nothing breaks; and *verify*
-    an edit by running the tests before declaring the task done.
+    removing it; *verify* an edit by running the tests before declaring done; and
+    do new work on a branch you have actually switched to, so a commit lands where
+    a pull request can find it.
     """
     return (
         "You are limpiador, an autonomous git maintenance agent operating on the "
@@ -141,7 +142,15 @@ def _system_prompt(repo: Path) -> str:
         "(find where it is defined and used) and change exactly those sites, so "
         "you never miss a call site or break the build.\n"
         "- After editing code, verify your change by running the tests before you "
-        "finish — do not declare success you have not checked."
+        "finish — do not declare success you have not checked.\n"
+        "- To do new work on a branch, create AND switch to it in one step "
+        "(checkout with create), then make your edits and commit — do not merely "
+        "create a branch without switching, or your commit lands on the old branch.\n"
+        "- A pull request needs its head branch to have at least one commit ahead "
+        "of the base and to be pushed to the remote. So the order is: switch to the "
+        "new branch, edit, commit, push, then open the pull request.\n"
+        "- Discover tools efficiently: once a search shows you the tool you need, "
+        "load it and use it — do not search again for the same capability."
     )
 
 
