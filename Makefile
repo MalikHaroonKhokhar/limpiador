@@ -1,6 +1,6 @@
 .PHONY: help test test-unit test-integration test-e2e test-reproduce eval \
         test-all test-coverage test-coverage-report test-fast test-failed \
-        test-specific test-e2e-check run dev-mock demo clean install setup verify
+        test-specific test-e2e-check run run-sandbox dev-mock demo clean install setup verify
 
 # ============================================================================
 # Virtual Environment Setup
@@ -23,6 +23,19 @@ REAL_ENV := LIMPIADOR_LLM=openai
 #   GITHUB_TOKEN            - auth for the throwaway repo
 #   LIMPIADOR_SANDBOX_REPO  - the throwaway repo, e.g. you/limpiador-sandbox
 # If any is missing, E2E skips gracefully instead of failing or touching prod.
+
+# Load .env (git-ignored) if present, and export its credentials to recipe
+# environments, so `make run` / `make eval` / `make test-e2e` pick up
+# OPENAI_API_KEY, GITHUB_TOKEN, and LIMPIADOR_SANDBOX_REPO without the developer
+# exporting them by hand. A missing .env is fine — mock-mode targets and the
+# default `make test` never need it. (Run mode stays controlled per-target by
+# MOCK_ENV / REAL_ENV, so LIMPIADOR_LLM is deliberately not exported here.)
+-include .env
+export OPENAI_API_KEY GITHUB_TOKEN LIMPIADOR_SANDBOX_REPO
+# Export TASK too, so recipes read it from the environment as "$$TASK" rather
+# than expanding $(TASK) into the shell line — a free-text task with quotes or
+# newlines then can't break the recipe's shell.
+export TASK
 
 # Default target
 help:
@@ -208,10 +221,34 @@ test-specific:
 run:
 	@test -n "$(REPO)" || (echo "❌ Error: REPO not specified." && \
 		echo "Usage: make run REPO=. TASK=\"fix the failing test\"" && exit 1)
-	@test -n "$(TASK)" || (echo "❌ Error: TASK not specified." && \
+	@test -n "$$TASK" || (echo "❌ Error: TASK not specified." && \
 		echo "Usage: make run REPO=. TASK=\"fix the failing test\"" && exit 1)
 	@echo "🚀 Running limpiador (REAL mode) on $(REPO)..."
-	@$(REAL_ENV) $(PYTHON) -m limpiador.cli run --repo "$(REPO)" --task "$(TASK)"
+	@$(REAL_ENV) $(PYTHON) -m limpiador.cli run --repo "$(REPO)" --task "$$TASK"
+
+# The default tool-call ceiling for a sandbox run (override: MAX_CALLS=40).
+MAX_CALLS ?= 30
+
+# Run the agent against the THROWAWAY sandbox repo (from LIMPIADOR_SANDBOX_REPO),
+# without needing REPO: it clones the sandbox into a temp dir and runs there, so
+# pushes and PRs land on the throwaway, never a real repo. Real mode — costs
+# credits. Usage: make run-sandbox TASK="add a test file and open a PR"
+run-sandbox:
+	@test -n "$$TASK" || (echo "❌ Error: TASK not specified." && \
+		echo "Usage: make run-sandbox TASK=\"add a test file and open a PR\"" && exit 1)
+	@test -n "$$LIMPIADOR_SANDBOX_REPO" || (echo "❌ LIMPIADOR_SANDBOX_REPO not set (the throwaway repo)." && exit 1)
+	@test -n "$$GITHUB_TOKEN" || (echo "❌ GITHUB_TOKEN not set." && exit 1)
+	@test -n "$$OPENAI_API_KEY" || (echo "❌ OPENAI_API_KEY not set." && exit 1)
+	@echo "🧪 Running limpiador (REAL mode) against the SANDBOX: $$LIMPIADOR_SANDBOX_REPO"
+	@set -e; \
+	  work=$$(mktemp -d /tmp/limpiador-sandbox.XXXXXX); \
+	  echo "   cloning $$LIMPIADOR_SANDBOX_REPO into $$work/repo ..."; \
+	  git clone -q "https://x-access-token:$$GITHUB_TOKEN@github.com/$$LIMPIADOR_SANDBOX_REPO.git" "$$work/repo"; \
+	  git -C "$$work/repo" config user.name "limpiador agent"; \
+	  git -C "$$work/repo" config user.email "agent@limpiador.local"; \
+	  $(REAL_ENV) GITHUB_REPOSITORY="$$LIMPIADOR_SANDBOX_REPO" \
+	    $(PYTHON) -m limpiador.cli run --repo "$$work/repo" --task "$$TASK" --max-calls $(MAX_CALLS); \
+	  echo "   (agent's checkout left at $$work/repo for inspection — rm -rf when done)"
 
 dev-mock:
 	@test -n "$(REPO)" || (echo "❌ Error: REPO not specified." && \
