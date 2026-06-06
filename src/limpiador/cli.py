@@ -87,7 +87,7 @@ def _run(
     registry: ToolRegistry | None,
 ) -> int:
     """Boot the agent for the ``run`` subcommand and turn its result into a code."""
-    repo = Path(args.repo)
+    repo = Path(args.repo).resolve()
     if not repo.is_dir():
         print(
             f"error: repository path does not exist or is not a directory: {repo}",
@@ -105,6 +105,12 @@ def _run(
     except ConfigError as error:
         print(f"error: {error}", file=sys.stderr)
         return EXIT_ERROR
+
+    # Anchor the agent to the target repository. The git/fs/ast tools resolve the
+    # repo *ambiently* from the working directory (that is the deliberate design,
+    # §5.3), so the CLI must actually run *in* --repo — otherwise every tool would
+    # act on whatever directory limpiador happened to be launched from.
+    os.chdir(repo)
 
     registry = registry if registry is not None else REGISTRY
     guard = CallGuard(ceiling=args.max_calls)
