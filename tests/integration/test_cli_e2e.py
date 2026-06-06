@@ -9,10 +9,10 @@ and skip cleanly unless ``OPENAI_API_KEY`` / ``GITHUB_TOKEN`` /
 
 Assertions are deliberately relaxed (the real model is non-deterministic): a
 clean exit code, a commit that landed, a PR that appeared — the plumbing worked
-— never an exact transcript. The git namespace has no ``push`` tool, so the
-"land a commit / open a PR" flow is exercised in faithful slices: the CLI lands
-a real local commit (``test_cli_lands_a_real_commit``) and opens a real PR for a
-head branch already on the sandbox (``test_cli_opens_a_real_pr_on_the_sandbox``).
+— never an exact transcript. With ``git.push`` now in the toolset, the headline
+test (``test_cli_lands_a_commit_pushes_and_opens_a_pr``) drives the whole
+commit → push → open-PR flow autonomously in one CLI run; a lighter test pins
+the local-commit slice on its own.
 """
 
 from __future__ import annotations
@@ -120,33 +120,33 @@ def test_cli_lands_a_real_commit(tmp_path) -> None:
     assert after != before, f"expected a new commit; stdout={proc.stdout}"
 
 
-# ---- 3) the CLI opens a real PR on the sandbox -------------------------------
-def test_cli_opens_a_real_pr_on_the_sandbox(tmp_path) -> None:
+# ---- 3) the CLI lands a commit, pushes, and opens a PR — autonomously --------
+def test_cli_lands_a_commit_pushes_and_opens_a_pr(tmp_path) -> None:
     sandbox = _sandbox()
     base = sandbox.default_branch
     stamp = _stamp()
-    branch = f"e2e/pr-{stamp}"
+    branch = f"e2e/auto-{stamp}"
 
-    # Prepare the head the PR needs: a real branch + commit pushed to the sandbox.
+    # The clone's origin carries the token, so the agent's own git.push can reach
+    # the sandbox. Nothing is pre-pushed: the CLI run does the whole flow.
     clone = _clone(tmp_path / "sandbox")
-    clone.git.checkout("-b", branch)
-    (Path(clone.working_tree_dir) / f"e2e-{stamp}.md").write_text(f"e2e {stamp}\n")
-    clone.index.add([f"e2e-{stamp}.md"])
-    clone.index.commit(f"e2e {stamp}")
-    clone.git.push("origin", branch)
 
     pr = None
     try:
-        title = f"E2E test PR {stamp}"
+        title = f"E2E auto PR {stamp}"
         proc = _run_cli(
             Path(clone.working_tree_dir),
-            f"Open a pull request from the branch '{branch}' into '{base}' titled "
-            f"'{title}' with the body 'automated e2e'. Then finish.",
-            max_calls=16,
+            f"Create a new branch named '{branch}'. On it, create a file named "
+            f"e2e-{stamp}.md containing 'e2e {stamp}', stage and commit it with the "
+            f"message 'e2e {stamp}', push the branch to the 'origin' remote, then "
+            f"open a pull request from '{branch}' into '{base}' titled '{title}' "
+            f"with the body 'automated e2e'. Then finish.",
+            max_calls=30,
         )
 
         assert proc.returncode == 0, f"stdout={proc.stdout}\nstderr={proc.stderr}"
-        # Relaxed acceptance: a PR for our head branch now exists on the sandbox.
+        # Relaxed acceptance: the agent's own commit→push→create_pr flow left a real
+        # PR for the head branch on the sandbox.
         opened = list(sandbox.get_pulls(state="open", head=f"{sandbox.owner.login}:{branch}"))
         assert opened, f"expected a PR for head {branch}; stdout={proc.stdout}"
         pr = opened[0]
