@@ -510,12 +510,15 @@ class GrepMatch(Schema):
 
 class FsReadFileRequest(Schema):
     path: str = Field(min_length=1)
+    start_line: int | None = Field(default=None, ge=1, description="1-based first line to return.")
+    end_line: int | None = Field(default=None, ge=1, description="1-based last line, inclusive.")
 
 
 class FsFileContent(Schema):
     path: str = Field(min_length=1)
     content: str
     line_count: int = Field(ge=0)
+    start_line: int = Field(default=1, ge=1, description="1-based line the content starts at.")
 
 
 class FsWriteFileRequest(Schema):
