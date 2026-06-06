@@ -24,6 +24,15 @@ REAL_ENV := LIMPIADOR_LLM=openai
 #   LIMPIADOR_SANDBOX_REPO  - the throwaway repo, e.g. you/limpiador-sandbox
 # If any is missing, E2E skips gracefully instead of failing or touching prod.
 
+# Load .env (git-ignored) if present, and export its credentials to recipe
+# environments, so `make run` / `make eval` / `make test-e2e` pick up
+# OPENAI_API_KEY, GITHUB_TOKEN, and LIMPIADOR_SANDBOX_REPO without the developer
+# exporting them by hand. A missing .env is fine — mock-mode targets and the
+# default `make test` never need it. (Run mode stays controlled per-target by
+# MOCK_ENV / REAL_ENV, so LIMPIADOR_LLM is deliberately not exported here.)
+-include .env
+export OPENAI_API_KEY GITHUB_TOKEN LIMPIADOR_SANDBOX_REPO
+
 # Default target
 help:
 	@echo ""
