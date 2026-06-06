@@ -32,6 +32,10 @@ REAL_ENV := LIMPIADOR_LLM=openai
 # MOCK_ENV / REAL_ENV, so LIMPIADOR_LLM is deliberately not exported here.)
 -include .env
 export OPENAI_API_KEY GITHUB_TOKEN LIMPIADOR_SANDBOX_REPO
+# Export TASK too, so recipes read it from the environment as "$$TASK" rather
+# than expanding $(TASK) into the shell line — a free-text task with quotes or
+# newlines then can't break the recipe's shell.
+export TASK
 
 # Default target
 help:
@@ -217,10 +221,10 @@ test-specific:
 run:
 	@test -n "$(REPO)" || (echo "❌ Error: REPO not specified." && \
 		echo "Usage: make run REPO=. TASK=\"fix the failing test\"" && exit 1)
-	@test -n "$(TASK)" || (echo "❌ Error: TASK not specified." && \
+	@test -n "$$TASK" || (echo "❌ Error: TASK not specified." && \
 		echo "Usage: make run REPO=. TASK=\"fix the failing test\"" && exit 1)
 	@echo "🚀 Running limpiador (REAL mode) on $(REPO)..."
-	@$(REAL_ENV) $(PYTHON) -m limpiador.cli run --repo "$(REPO)" --task "$(TASK)"
+	@$(REAL_ENV) $(PYTHON) -m limpiador.cli run --repo "$(REPO)" --task "$$TASK"
 
 # The default tool-call ceiling for a sandbox run (override: MAX_CALLS=40).
 MAX_CALLS ?= 30
@@ -230,7 +234,7 @@ MAX_CALLS ?= 30
 # pushes and PRs land on the throwaway, never a real repo. Real mode — costs
 # credits. Usage: make run-sandbox TASK="add a test file and open a PR"
 run-sandbox:
-	@test -n "$(TASK)" || (echo "❌ Error: TASK not specified." && \
+	@test -n "$$TASK" || (echo "❌ Error: TASK not specified." && \
 		echo "Usage: make run-sandbox TASK=\"add a test file and open a PR\"" && exit 1)
 	@test -n "$$LIMPIADOR_SANDBOX_REPO" || (echo "❌ LIMPIADOR_SANDBOX_REPO not set (the throwaway repo)." && exit 1)
 	@test -n "$$GITHUB_TOKEN" || (echo "❌ GITHUB_TOKEN not set." && exit 1)
@@ -243,7 +247,7 @@ run-sandbox:
 	  git -C "$$work/repo" config user.name "limpiador agent"; \
 	  git -C "$$work/repo" config user.email "agent@limpiador.local"; \
 	  $(REAL_ENV) GITHUB_REPOSITORY="$$LIMPIADOR_SANDBOX_REPO" \
-	    $(PYTHON) -m limpiador.cli run --repo "$$work/repo" --task "$(TASK)" --max-calls $(MAX_CALLS); \
+	    $(PYTHON) -m limpiador.cli run --repo "$$work/repo" --task "$$TASK" --max-calls $(MAX_CALLS); \
 	  echo "   (agent's checkout left at $$work/repo for inspection — rm -rf when done)"
 
 dev-mock:
