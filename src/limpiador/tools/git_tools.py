@@ -20,6 +20,7 @@ depending on which plumbing answered; they all mean the same thing to a caller
 
 from __future__ import annotations
 
+import os
 from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
@@ -71,6 +72,9 @@ from limpiador.tools.base import Tool
 # here": a failed git subcommand, a bad rev name/object, and the value/OS errors
 # raised when resolving an empty history or a missing working-tree path.
 _LOOKUP_ERRORS = (GitCommandError, BadName, BadObject, ValueError, OSError)
+_DEFAULT_PROTECTED_BRANCHES = ("main", "master")
+_PROTECTED_BRANCHES_ENV = "LIMPIADOR_PROTECTED_BRANCHES"
+_ALLOW_PROTECTED_WRITES_ENV = "LIMPIADOR_ALLOW_PROTECTED_BRANCH_WRITES"
 
 
 # ---- ambient repository + shared projections --------------------------------
@@ -99,6 +103,45 @@ def _current_ref(repo: Repo) -> str:
         return repo.active_branch.name
     except TypeError:
         return repo.head.commit.hexsha[:12]
+
+
+def _protected_branches() -> set[str]:
+    """Branch names the agent must not write unless explicitly unlocked."""
+    configured = os.environ.get(_PROTECTED_BRANCHES_ENV)
+    if configured is None:
+        return set(_DEFAULT_PROTECTED_BRANCHES)
+    return {name.strip() for name in configured.split(",") if name.strip()}
+
+
+def _protected_writes_allowed() -> bool:
+    """Whether branch protection has been intentionally bypassed."""
+    return os.environ.get(_ALLOW_PROTECTED_WRITES_ENV) == "1"
+
+
+def _reject_protected_write(action: str, branch: str) -> None:
+    """Stop accidental direct writes to shared default branches."""
+    if _protected_writes_allowed() or branch not in _protected_branches():
+        return
+    raise MalformedInputError(
+        f"refusing to {action} protected branch {branch!r}; "
+        "create and check out a feature branch first."
+    )
+
+
+def _reject_protected_push_ref(ref: str) -> None:
+    """Stop protected branch pushes named as branches or refspecs."""
+    if _protected_writes_allowed():
+        return
+    names = [_short_ref(part) for part in ref.split(":") if part]
+    blocked = [name for name in names if name in _protected_branches()]
+    if blocked:
+        _reject_protected_write("push", blocked[0])
+
+
+def _short_ref(ref: str) -> str:
+    """Normalize a branch or refs/heads ref to its branch name."""
+    ref = ref.removeprefix("+")
+    return ref.removeprefix("refs/heads/")
 
 
 def _commit_info(commit: Commit) -> CommitInfo:
@@ -252,7 +295,10 @@ class GitCheckout(Tool):
         previous = _current_ref(repo)
         with _translating(f"cannot check out {request.ref!r}"):
             if request.create:
-                repo.create_head(request.ref)
+                if request.base:
+                    repo.create_head(request.ref, commit=request.base)
+                else:
+                    repo.create_head(request.ref)
             repo.git.checkout(request.ref)
         return GitCheckoutResult(ref=request.ref, previous=previous)
 
@@ -286,6 +332,7 @@ class GitCommit(Tool):
         repo = _open_repo()
         if not _staged_paths(repo):
             raise MalformedInputError("nothing staged to commit; stage changes first.")
+        _reject_protected_write("commit on", _current_ref(repo))
         commit = repo.index.commit(request.message)
         return GitCommitResult(sha=commit.hexsha, message=request.message)
 
@@ -340,6 +387,7 @@ class GitPush(Tool):
     def run(self, request: GitPushRequest) -> GitPushResult:
         repo = _open_repo()
         branch = request.branch or _current_ref(repo)
+        _reject_protected_push_ref(branch)
         flags = (["--set-upstream"] if request.set_upstream else []) + (
             ["--force"] if request.force else []
         )
