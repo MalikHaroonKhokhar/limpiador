@@ -375,15 +375,15 @@ def test_a_declared_tool_loads_with_a_valid_openai_schema() -> None:
 
 
 def test_invoking_a_declared_but_unimplemented_tool_raises_a_typed_error() -> None:
+    # Every shipped namespace is now fully implemented, so this exercises the
+    # declared_tool *mechanism* directly: a capability shell with typed I/O and
+    # no executor yet is the contract a not-yet-built tool is registered under.
     from limpiador.observability.errors import ToolError, ToolUnavailableError
-    from limpiador.schemas import TestRunRequest
-    from limpiador.tools import test_tools
+    from limpiador.tools.base import declared_tool
 
-    declared = next(
-        tool for tool in test_tools.TOOLS if tool.name == "test.run_tests"
-    )
+    declared = declared_tool("ci.trigger_ci", "A not-yet-built capability.", _NoInput, _NoOutput)
     with pytest.raises(ToolUnavailableError) as caught:
-        declared.invoke(TestRunRequest(path="."))
+        declared.invoke(_NoInput())
     # It is a recoverable ToolError, so the loop can fold it back into context
     # rather than crashing on an unimplemented capability.
     assert isinstance(caught.value, ToolError)
