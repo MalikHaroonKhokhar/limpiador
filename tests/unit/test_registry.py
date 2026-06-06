@@ -54,6 +54,7 @@ _DECLARED_TOOL_NAMES = {
     "git.commit",
     "git.reset",
     "git.stash",
+    "git.push",
     "git.blame",
     "github.get_issue",
     "github.list_issues",
@@ -152,7 +153,7 @@ def test_core_tools_are_always_present_on_an_empty_registry() -> None:
 
 def test_default_registry_registers_all_declared_tools_at_import() -> None:
     assert set(REGISTRY.tool_names()) == _DECLARED_TOOL_NAMES
-    assert len(REGISTRY.tool_names()) == 56
+    assert len(REGISTRY.tool_names()) == 57
     assert REGISTRY.loaded_names() == ()
     assert set(_active_names(REGISTRY)) == set(CORE_TOOL_NAMES)
 

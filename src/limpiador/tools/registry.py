@@ -1,6 +1,6 @@
 """Dynamic tool loading and search (ARCHITECTURE.md §5, property #1).
 
-The registry holds all fifty-six tools registered at import time, tracks which
+The registry holds all fifty-seven tools registered at import time, tracks which
 are currently loaded into context, and exposes only ``core + loaded`` schemas to
 the LLM adapter each turn. The model always sees a small fixed core —
 ``search_tools(query)``, ``load_tool(name)``, ``finish(result)`` — and discovers
@@ -305,7 +305,7 @@ def build_registry() -> ToolRegistry:
     return registry
 
 
-# The default application registry: the core meta-tools plus all fifty-six
+# The default application registry: the core meta-tools plus all fifty-seven
 # declared tools, registered at import. Tests build their own isolated
 # ToolRegistry instances; this is the one the agent loop runs against.
 REGISTRY = build_registry()

@@ -67,7 +67,7 @@ def test_reviewer_registry_is_a_strict_read_only_subset_of_the_parent() -> None:
     for writer in (
         "fs.write_file", "fs.delete", "fs.move", "fs.apply_patch", "fs.mkdir",
         "ast.rename_symbol", "ast.extract_function",
-        "git.commit", "git.stage", "github.merge_pr", "github.create_pr",
+        "git.commit", "git.stage", "git.push", "github.merge_pr", "github.create_pr",
     ):
         assert writer not in reviewer
 

@@ -2,8 +2,8 @@
 
 Property #1 is the dynamic tool registry at scale: the model sees only the fixed
 core meta-tools, and discovers the rest. This test pins the *whole* surface: all
-five tool namespaces are now implemented, and the registry holds exactly 56
-declared tools (12 git + 14 github + 10 fs + 12 ast + 8 verification). That is
+five tool namespaces are now implemented, and the registry holds exactly 57
+declared tools (13 git + 14 github + 10 fs + 12 ast + 8 verification). That is
 the concrete "50+ tools" the property promises — and the count is asserted at the
 application registry that the agent loop actually runs against, not a fixture.
 """
@@ -19,14 +19,14 @@ from limpiador.tools.registry import REGISTRY
 # ``ci`` (two that compose the github API) — exactly as ARCHITECTURE.md §5.3
 # groups them.
 _EXPECTED_PER_NAMESPACE = {
-    "git": 12,
+    "git": 13,
     "github": 14,
     "fs": 10,
     "ast": 12,
     "test": 6,
     "ci": 2,
 }
-_TOTAL = 56
+_TOTAL = 57
 
 
 def _namespace(name: str) -> str:

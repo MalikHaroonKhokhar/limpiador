@@ -27,7 +27,7 @@ system rather than to a vibe.
 
 | # | Property | Where it lives in limpiador |
 |---|----------|------------------------------|
-| 1 | 50+ tools, 4+ namespaces, model-driven selection, coherent at scale | `tools/` (5 namespaces, 56 tools) + `tools/registry.py` (dynamic loading via `search_tools`) |
+| 1 | 50+ tools, 4+ namespaces, model-driven selection, coherent at scale | `tools/` (5 namespaces, 57 tools) + `tools/registry.py` (dynamic loading via `search_tools`) |
 | 2 | Subagent orchestration in an isolated context with a scoped tool set | `subagents/reviewer.py` (`spawn_reviewer`, read-only scoped registry, typed `ReviewResult`) |
 | 3 | Long-horizon execution (20+ calls) with explicit context management | `agent/loop.py` + `agent/context.py` (compaction / eviction expressed in code) |
 | 4 | Production scaffolding (observability, retries, rate limiting, typed errors, eval harness, test suite) | `observability/`, `evals/`, `tests/` |
@@ -186,22 +186,22 @@ the task actually requires. This is the architecture that *proves*
 model-driven selection: the model cannot fall back on a tool it was handed,
 because it was handed almost nothing. It must choose.
 
-The registry holds all fifty-six tools registered at import time, tracks which
+The registry holds all fifty-seven tools registered at import time, tracks which
 are currently loaded into context, and exposes only `core + loaded` schemas to
 the LLM adapter each turn. Search ranking is a local, deterministic operation
 over tool names and descriptions — no model call, no cost. (The current
 ranking strategy and its known limitation are recorded in the architectural
 debt tracker in `.clauderules`.)
 
-### 5.3 The five namespaces (56 tools)
+### 5.3 The five namespaces (57 tools)
 
 Tools are grouped into coherent namespaces. Nothing here is filler invented to
 reach a number; each namespace is a genuine capability surface a real
 maintenance agent needs.
 
-**`git.*` — local repository state (12)**
+**`git.*` — local repository state + publishing (13)**
 `status`, `diff`, `log`, `show`, `branch_list`, `branch_create`, `checkout`,
-`stage`, `commit`, `reset`, `stash`, `blame`
+`stage`, `commit`, `reset`, `stash`, `push`, `blame`
 
 **`github.*` — remote collaboration (14)**
 `get_issue`, `list_issues`, `create_issue`, `comment_issue`, `get_pr`,

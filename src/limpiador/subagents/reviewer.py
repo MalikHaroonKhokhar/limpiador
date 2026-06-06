@@ -19,7 +19,7 @@ on three axes:
   (findings with severity/file/line/suggestion plus a verdict). Its internal tool
   calls do not leak: the parent receives the object and nothing else.
 
-``spawn_reviewer`` is deliberately *not* one of the 56 registry tools — it is the
+``spawn_reviewer`` is deliberately *not* one of the 57 registry tools — it is the
 parent's orchestration primitive for delegating a review, not a repo-acting tool.
 """
 
@@ -86,7 +86,7 @@ def _read_only_tools() -> list[object]:
 def build_reviewer_registry() -> ToolRegistry:
     """A fresh registry scoped to the reviewer's read-only allow-list.
 
-    Each spawn gets its own registry, distinct from the parent's 56-tool one.
+    Each spawn gets its own registry, distinct from the parent's 57-tool one.
     Tools are registered *and loaded* so the reviewer's whole (small) menu is
     immediately available — discovery-at-scale is the parent's property, not the
     reviewer's. Only allow-listed tools are registered, so a writer cannot be

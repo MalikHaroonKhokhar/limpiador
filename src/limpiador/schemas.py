@@ -210,7 +210,7 @@ class LLMResponse(Schema):
 
 
 # ============================================================================
-# git.* — local repository state (ARCHITECTURE.md §5.3, 12 tools)
+# git.* — local repository state + publishing (ARCHITECTURE.md §5.3, 13 tools)
 # ============================================================================
 class CommitInfo(Schema):
     """A single commit, as returned by git log / show / commit."""
@@ -334,6 +334,19 @@ class GitStashRequest(Schema):
 class GitStashResult(Schema):
     stash_ref: str | None = None
     popped: bool = False
+
+
+class GitPushRequest(Schema):
+    remote: str = Field(default="origin", min_length=1)
+    branch: str | None = Field(default=None, description="Branch to push; defaults to the current one.")
+    set_upstream: bool = False
+    force: bool = False
+
+
+class GitPushResult(Schema):
+    remote: str = Field(min_length=1)
+    branch: str = Field(min_length=1)
+    pushed: bool = True
 
 
 class GitBlameRequest(Schema):
