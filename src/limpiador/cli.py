@@ -141,7 +141,10 @@ def _system_prompt(repo: Path) -> str:
         "(find where it is defined and used) and change exactly those sites, so "
         "you never miss a call site or break the build.\n"
         "- After editing code, verify your change by running the tests before you "
-        "finish — do not declare success you have not checked."
+        "finish — do not declare success you have not checked.\n"
+        "- Do not commit to or push protected branches such as main or master. "
+        "If you are on a protected branch, create and switch to the requested "
+        "feature branch first."
     )
 
 

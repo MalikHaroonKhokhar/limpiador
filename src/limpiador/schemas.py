@@ -293,6 +293,10 @@ class GitBranchCreateResult(Schema):
 class GitCheckoutRequest(Schema):
     ref: str = Field(min_length=1)
     create: bool = False
+    base: str | None = Field(
+        default=None,
+        description="Base ref to create the branch from when create is true.",
+    )
 
 
 class GitCheckoutResult(Schema):

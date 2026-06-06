@@ -203,6 +203,21 @@ def test_checkout_create_makes_and_switches(seeded_repo) -> None:
     assert seeded_repo.active_branch.name == "brand-new"
 
 
+def test_checkout_can_create_a_branch_from_a_base_ref(seeded_repo) -> None:
+    base_sha = seeded_repo.head.commit.hexsha
+    (_repo_path(seeded_repo) / "later.txt").write_text("later\n")
+    seeded_repo.index.add(["later.txt"])
+    seeded_repo.index.commit("later commit")
+
+    result = _tool("git.checkout").invoke(
+        {"ref": "from-base", "create": True, "base": base_sha}
+    )
+
+    assert result.ref == "from-base"
+    assert seeded_repo.active_branch.name == "from-base"
+    assert seeded_repo.head.commit.hexsha == base_sha
+
+
 def test_stage_adds_paths_to_the_index(seeded_repo) -> None:
     (_repo_path(seeded_repo) / "new.txt").write_text("new\n")
 
@@ -214,6 +229,7 @@ def test_stage_adds_paths_to_the_index(seeded_repo) -> None:
 
 
 def test_commit_records_staged_changes(seeded_repo) -> None:
+    seeded_repo.git.checkout("-b", "feature")
     (_repo_path(seeded_repo) / "new.txt").write_text("new\n")
     seeded_repo.index.add(["new.txt"])
 
@@ -223,6 +239,17 @@ def test_commit_records_staged_changes(seeded_repo) -> None:
     assert result.message == "add new"
     assert len(result.sha) == 40
     assert seeded_repo.head.commit.message.strip() == "add new"
+
+
+def test_commit_on_a_protected_branch_raises_malformed_input(seeded_repo) -> None:
+    seeded_repo.git.branch("-M", "main")
+    (_repo_path(seeded_repo) / "new.txt").write_text("new\n")
+    seeded_repo.index.add(["new.txt"])
+
+    with pytest.raises(MalformedInputError):
+        _tool("git.commit").invoke({"message": "add new"})
+
+    assert seeded_repo.head.commit.message.strip() == "initial commit"
 
 
 def test_reset_unstages_changes(seeded_repo) -> None:
@@ -288,6 +315,7 @@ def test_blame_honors_a_line_range(seeded_repo) -> None:
 def test_push_sends_the_branch_to_a_remote(seeded_repo) -> None:
     # A bare repo stands in for the remote (no network); the seeded repo pushes
     # its branch to it and the remote ends up pointing at the same commit.
+    seeded_repo.git.checkout("-b", "feature")
     remote_path = _repo_path(seeded_repo) / "remote.git"
     Repo.init(remote_path, bare=True)
     seeded_repo.create_remote("origin", str(remote_path))
@@ -307,6 +335,7 @@ def test_push_sends_the_branch_to_a_remote(seeded_repo) -> None:
 
 
 def test_push_defaults_to_the_current_branch(seeded_repo) -> None:
+    seeded_repo.git.checkout("-b", "feature")
     remote_path = _repo_path(seeded_repo) / "remote.git"
     Repo.init(remote_path, bare=True)
     seeded_repo.create_remote("origin", str(remote_path))
@@ -314,6 +343,32 @@ def test_push_defaults_to_the_current_branch(seeded_repo) -> None:
     result = _tool("git.push").invoke({"remote": "origin", "set_upstream": True})
 
     assert result.branch == seeded_repo.active_branch.name
+
+
+def test_push_on_a_protected_branch_raises_malformed_input(seeded_repo) -> None:
+    seeded_repo.git.branch("-M", "main")
+    remote_path = _repo_path(seeded_repo) / "remote.git"
+    Repo.init(remote_path, bare=True)
+    seeded_repo.create_remote("origin", str(remote_path))
+
+    with pytest.raises(MalformedInputError):
+        _tool("git.push").invoke({"remote": "origin", "branch": "main"})
+
+    remote = Repo(remote_path)
+    assert "main" not in [head.name for head in remote.heads]
+
+
+def test_push_refspec_to_a_protected_branch_raises_malformed_input(seeded_repo) -> None:
+    seeded_repo.git.checkout("-b", "feature")
+    remote_path = _repo_path(seeded_repo) / "remote.git"
+    Repo.init(remote_path, bare=True)
+    seeded_repo.create_remote("origin", str(remote_path))
+
+    with pytest.raises(MalformedInputError):
+        _tool("git.push").invoke({"remote": "origin", "branch": "feature:main"})
+
+    remote = Repo(remote_path)
+    assert "main" not in [head.name for head in remote.heads]
 
 
 # ---- failure paths: each tool raises the correct typed error -----------------
@@ -378,6 +433,7 @@ def test_blame_missing_file_raises_not_found(seeded_repo) -> None:
 
 
 def test_push_to_an_unknown_remote_raises_not_found(seeded_repo) -> None:
+    seeded_repo.git.checkout("-b", "feature")
     with pytest.raises(NotFoundError):
         _tool("git.push").invoke({"remote": "no-such-remote"})
 
