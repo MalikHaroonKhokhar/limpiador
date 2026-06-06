@@ -119,11 +119,23 @@ def _run(
 
 
 def _system_prompt(repo: Path) -> str:
-    """The standing instruction that anchors the agent to the target repository."""
+    """The standing instruction that anchors the agent to the target repository.
+
+    Beyond anchoring, it encodes the two safe-work habits the reproduction tier
+    pinned (tests/reproduce/): resolve a symbol's references *before* renaming or
+    removing it, so every call site is changed and nothing breaks; and *verify*
+    an edit by running the tests before declaring the task done.
+    """
     return (
         "You are limpiador, an autonomous git maintenance agent operating on the "
         f"repository at {repo}. Discover the tools you need, act, and call finish "
-        "with a structured result when the task is complete."
+        "with a structured result when the task is complete.\n"
+        "Work safely:\n"
+        "- Before renaming or removing a symbol, first resolve its references "
+        "(find where it is defined and used) and change exactly those sites, so "
+        "you never miss a call site or break the build.\n"
+        "- After editing code, verify your change by running the tests before you "
+        "finish — do not declare success you have not checked."
     )
 
 
