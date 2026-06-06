@@ -116,7 +116,10 @@ def _pull(number: int = 1, title: str = "Add a feature", state: str = "open"):
         head=_ns(ref="feature"),
         base=_ns(ref="main"),
         body="why this change",
-        get_files=_returns([_ns(filename="src/a.py"), _ns(filename="src/b.py")]),
+        get_files=_returns([
+            _ns(filename="src/a.py", patch="@@ -1 +1 @@\n-old a\n+new a"),
+            _ns(filename="src/b.py", patch="@@ -1 +1 @@\n-old b\n+new b"),
+        ]),
         create_review=_returns(_ns(id=7)),
         merge=_returns(_ns(merged=True, sha="deadbee")),
     )
@@ -236,6 +239,10 @@ def test_get_pr_returns_typed_pull_request() -> None:
     assert result.head_ref == "feature"
     assert result.base_ref == "main"
     assert result.changed_files == ["src/a.py", "src/b.py"]
+    # The diff is assembled from the per-file patches — the typed input that
+    # feeds spawn_reviewer (the get_pr -> reviewer composition chain).
+    assert result.diff is not None
+    assert "new a" in result.diff and "new b" in result.diff
 
 
 def test_list_prs_returns_typed_list() -> None:

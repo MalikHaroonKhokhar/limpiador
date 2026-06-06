@@ -188,7 +188,7 @@ def _to_issue(issue: object) -> Issue:
     )
 
 
-def _to_pull(pull: object, *, changed_files: list[str]) -> PullRequest:
+def _to_pull(pull: object, *, changed_files: list[str], diff: str | None = None) -> PullRequest:
     return PullRequest(
         number=pull.number,
         title=pull.title,
@@ -196,8 +196,16 @@ def _to_pull(pull: object, *, changed_files: list[str]) -> PullRequest:
         head_ref=pull.head.ref,
         base_ref=pull.base.ref,
         body=pull.body,
+        diff=diff,
         changed_files=changed_files,
     )
+
+
+def _diff_from_files(files: list[object]) -> str | None:
+    """Assemble a unified diff from a PR's per-file patches (the get_pr → reviewer
+    handoff): the concatenated patches are the ``diff`` that feeds spawn_reviewer."""
+    patches = [file.patch for file in files if getattr(file, "patch", None)]
+    return "\n".join(patches) if patches else None
 
 
 # ---- the base every github tool shares --------------------------------------
@@ -309,10 +317,11 @@ class GithubGetPr(_GitHubTool):
     def run(self, request: GithubGetPrRequest) -> PullRequest:
         def operation():
             pull = self._repo().get_pull(request.number)
-            return pull, [changed.filename for changed in pull.get_files()]
+            return pull, list(pull.get_files())
 
         pull, files = self._call(operation)
-        return _to_pull(pull, changed_files=files)
+        changed = [changed.filename for changed in files]
+        return _to_pull(pull, changed_files=changed, diff=_diff_from_files(files))
 
 
 class GithubListPrs(_GitHubTool):
