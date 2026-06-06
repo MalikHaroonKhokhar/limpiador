@@ -226,8 +226,10 @@ run:
 	@echo "🚀 Running limpiador (REAL mode) on $(REPO)..."
 	@$(REAL_ENV) $(PYTHON) -m limpiador.cli run --repo "$(REPO)" --task "$$TASK"
 
-# The default tool-call ceiling for a sandbox run (override: MAX_CALLS=40).
-MAX_CALLS ?= 30
+# The default tool-call ceiling for a sandbox run (override: MAX_CALLS=80).
+# A multi-step task (branch → edit → commit → push → PR) pays a discover+load
+# tool call for each capability before using it, so the ceiling needs headroom.
+MAX_CALLS ?= 60
 
 # Run the agent against the THROWAWAY sandbox repo (from LIMPIADOR_SANDBOX_REPO),
 # without needing REPO: it clones the sandbox into a temp dir and runs there, so
