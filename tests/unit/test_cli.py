@@ -99,3 +99,51 @@ def test_run_anchors_the_agent_in_the_target_repo(tmp_path, monkeypatch, make_lo
 
     assert code == 0
     assert seen and seen[0] == target.resolve()
+
+
+def test_trace_flag_dumps_the_tool_call_sequence_to_stderr(
+    tmp_path, make_loaded_registry, mock_adapter, capsys
+) -> None:
+    """``--trace`` must surface *what the agent did* — the ordered tool calls and a
+    per-tool tally — to stderr, so a run that thrashes (one capability called over
+    and over) is diagnosable from the run output instead of being an opaque abort."""
+    from limpiador.schemas import Schema
+    from limpiador.tools.base import Tool
+
+    target = tmp_path / "target"
+    target.mkdir()
+
+    class _NoIn(Schema):
+        pass
+
+    class _Ok(Schema):
+        ok: bool = True
+
+    probe = type(
+        "Noop",
+        (Tool,),
+        {
+            "name": "git.status",
+            "description": "noop probe",
+            "Input": _NoIn,
+            "Output": _Ok,
+            "run": lambda self, request: _Ok(),
+        },
+    )()
+    registry = make_loaded_registry(probe)
+    mock = mock_adapter.build(
+        mock_adapter.tool_turn(mock_adapter.tool_call("git_status")),
+        mock_adapter.tool_turn(mock_adapter.tool_call("git_status")),
+        mock_adapter.tool_turn(mock_adapter.tool_call("finish", {"result": "done"})),
+    )
+
+    code = main(
+        ["run", "--repo", str(target), "--task", "t", "--trace"],
+        adapter=mock,
+        registry=registry,
+    )
+
+    assert code == 0
+    err = capsys.readouterr().err
+    assert "git_status" in err  # the ordered sequence is shown
+    assert "git_status×2" in err  # the per-tool tally reveals repetition/thrash
