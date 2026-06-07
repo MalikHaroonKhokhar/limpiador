@@ -58,6 +58,12 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help="Override the model the adapter uses (real mode only).",
     )
+    run_cmd.add_argument(
+        "--trace",
+        action="store_true",
+        help="After the run, print the ordered tool calls and a per-tool tally to "
+        "stderr — so a thrashing run is diagnosable instead of an opaque abort.",
+    )
     return parser
 
 
@@ -121,6 +127,8 @@ def _run(
         guard=guard,
         system_prompt=_system_prompt(repo),
     )
+    if args.trace:
+        _dump_trace(result)
     return _report(result)
 
 
@@ -146,6 +154,30 @@ def _system_prompt(repo: Path) -> str:
         "If you are on a protected branch, create and switch to the requested "
         "feature branch first."
     )
+
+
+def _dump_trace(result: RunResult) -> None:
+    """Print what the agent actually did — the ordered tool calls and a per-tool
+    tally — to stderr. A run that aborts on the ceiling is otherwise opaque; the
+    tally makes a thrash (one capability searched/loaded/called over and over)
+    obvious at a glance, which is how a stuck run gets diagnosed.
+    """
+    trace = result.trace
+    if trace is None:
+        return
+    from collections import Counter
+
+    calls = trace.tool_calls
+    print(
+        f"trace: {len(calls)} tool call(s) over {result.turns} turn(s)",
+        file=sys.stderr,
+    )
+    for index, entry in enumerate(calls, start=1):
+        suffix = f"  [error: {entry.error}]" if entry.error else ""
+        print(f"  {index:>3}. {entry.name}{suffix}", file=sys.stderr)
+    tally = Counter(entry.name for entry in calls)
+    summary = ", ".join(f"{name}×{count}" for name, count in tally.most_common())
+    print(f"  by tool: {summary}", file=sys.stderr)
 
 
 def _report(result: RunResult) -> int:

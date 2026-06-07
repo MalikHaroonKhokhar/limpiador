@@ -249,7 +249,7 @@ run-sandbox:
 	  git -C "$$work/repo" config user.name "limpiador agent"; \
 	  git -C "$$work/repo" config user.email "agent@limpiador.local"; \
 	  $(REAL_ENV) GITHUB_REPOSITORY="$$LIMPIADOR_SANDBOX_REPO" \
-	    $(PYTHON) -m limpiador.cli run --repo "$$work/repo" --task "$$TASK" --max-calls $(MAX_CALLS); \
+	    $(PYTHON) -m limpiador.cli run --repo "$$work/repo" --task "$$TASK" --max-calls $(MAX_CALLS) --trace; \
 	  if printf '%s' "$$TASK" | grep -Eiq 'pull request|(^|[^[:alpha:]])pr([^[:alpha:]]|$$)'; then \
 	    base=$$(git -C "$$work/repo" symbolic-ref --short refs/remotes/origin/HEAD | sed 's#^origin/##'); \
 	    verified=0; \
