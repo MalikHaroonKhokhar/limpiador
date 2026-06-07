@@ -24,6 +24,7 @@ import pytest
 from github import GithubException, RateLimitExceededException
 
 from limpiador.observability.errors import (
+    MalformedInputError,
     NotFoundError,
     PermissionDeniedError,
     ToolError,
@@ -389,6 +390,35 @@ def test_a_403_maps_to_permission_denied_error() -> None:
 
     with pytest.raises(PermissionDeniedError):
         tools["github.create_issue"].invoke({"title": "blocked"})
+
+
+def test_create_pr_422_tells_the_agent_to_push_a_branch_with_a_commit() -> None:
+    # GitHub rejects an unpushed or empty head branch with a 422. The bare
+    # "request rejected (422)" reading led the agent to think its *inputs* were
+    # malformed and give up; the message must instead name the head branch and
+    # tell it to push a branch that is a commit ahead of the base, so it can
+    # self-correct (git.push, then retry create_pr) rather than abandon the PR.
+    repo = _happy_repo()
+    repo.create_pull = _raises(
+        GithubException(
+            422,
+            {
+                "message": "Validation Failed",
+                "errors": [{"message": "No commits between main and feature"}],
+            },
+            None,
+        )
+    )
+    tools, *_ = _bind(repo=repo)
+
+    with pytest.raises(MalformedInputError) as caught:
+        tools["github.create_pr"].invoke(
+            {"title": "My change", "head_ref": "feature", "base_ref": "main"}
+        )
+    message = str(caught.value).lower()
+    assert "feature" in message  # it names the head branch that is not ready
+    assert "push" in message  # and tells the agent how to recover
+    assert "commit" in message
 
 
 def test_every_mapped_failure_is_a_recoverable_tool_error() -> None:
