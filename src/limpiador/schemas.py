@@ -288,6 +288,7 @@ class GitBranchCreateRequest(Schema):
 class GitBranchCreateResult(Schema):
     name: str = Field(min_length=1)
     created: bool = True
+    switched: bool = True
 
 
 class GitCheckoutRequest(Schema):
