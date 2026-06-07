@@ -226,10 +226,10 @@ run:
 	@echo "🚀 Running limpiador (REAL mode) on $(REPO)..."
 	@$(REAL_ENV) $(PYTHON) -m limpiador.cli run --repo "$(REPO)" --task "$$TASK"
 
-# The default tool-call ceiling for a sandbox run (override: MAX_CALLS=80).
+# The default tool-call ceiling for a sandbox run (override: MAX_CALLS=120).
 # A multi-step task (branch → edit → commit → push → PR) pays a discover+load
 # tool call for each capability before using it, so the ceiling needs headroom.
-MAX_CALLS ?= 60
+MAX_CALLS ?= 100
 
 # Run the agent against the THROWAWAY sandbox repo (from LIMPIADOR_SANDBOX_REPO),
 # without needing REPO: it clones the sandbox into a temp dir and runs there, so
@@ -250,6 +250,20 @@ run-sandbox:
 	  git -C "$$work/repo" config user.email "agent@limpiador.local"; \
 	  $(REAL_ENV) GITHUB_REPOSITORY="$$LIMPIADOR_SANDBOX_REPO" \
 	    $(PYTHON) -m limpiador.cli run --repo "$$work/repo" --task "$$TASK" --max-calls $(MAX_CALLS); \
+	  if printf '%s' "$$TASK" | grep -Eiq 'pull request|(^|[^[:alpha:]])pr([^[:alpha:]]|$$)'; then \
+	    base=$$(git -C "$$work/repo" symbolic-ref --short refs/remotes/origin/HEAD | sed 's#^origin/##'); \
+	    verified=0; \
+	    for head in $$(git -C "$$work/repo" for-each-ref --format='%(refname:short)' refs/heads); do \
+	      test "$$head" = "$$base" && continue; \
+	      count=$$(gh pr list --repo "$$LIMPIADOR_SANDBOX_REPO" --head "$$head" --base "$$base" --state open --json number --jq length 2>/dev/null || echo 0); \
+	      if test "$$count" -gt 0; then \
+	        echo "   verified open PR for $$head -> $$base"; \
+	        verified=1; \
+	        break; \
+	      fi; \
+	    done; \
+	    test "$$verified" = 1 || (echo "❌ Expected an open PR, but none was found on $$LIMPIADOR_SANDBOX_REPO." && exit 1); \
+	  fi; \
 	  echo "   (agent's checkout left at $$work/repo for inspection — rm -rf when done)"
 
 dev-mock:
