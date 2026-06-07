@@ -350,14 +350,27 @@ class GithubCreatePr(_GitHubTool):
     Output = PullRequest
 
     def run(self, request: GithubCreatePrRequest) -> PullRequest:
-        pull = self._call(
-            lambda: self._repo().create_pull(
-                title=request.title,
-                head=request.head_ref,
-                base=request.base_ref,
-                body=request.body or "",
+        try:
+            pull = self._call(
+                lambda: self._repo().create_pull(
+                    title=request.title,
+                    head=request.head_ref,
+                    base=request.base_ref,
+                    body=request.body or "",
+                )
             )
-        )
+        except MalformedInputError as rejected:
+            # GitHub answers an unpushed or zero-commit head branch with a 422,
+            # which _classify folds to MalformedInputError. The bare "request
+            # rejected" reading made the agent think its *inputs* were wrong and
+            # abandon the PR; name the head branch and the remedy instead, so it
+            # self-corrects — push a branch a commit ahead of the base, then retry.
+            raise MalformedInputError(
+                f"{rejected} — the head branch '{request.head_ref}' must be pushed "
+                f"to the remote and be at least one commit ahead of "
+                f"'{request.base_ref}'. Commit your work on '{request.head_ref}', "
+                "push it (git.push), then open the pull request again."
+            ) from rejected
         return _to_pull(pull, changed_files=[])
 
 
