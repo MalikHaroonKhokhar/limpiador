@@ -175,13 +175,18 @@ def test_branch_list_includes_current_and_new_branch(seeded_repo) -> None:
     assert result.current in result.branches
 
 
-def test_branch_create_makes_the_branch(seeded_repo) -> None:
+def test_branch_create_makes_the_branch_and_switches_to_it(seeded_repo) -> None:
+    # "make a branch named X" means start working on X. A create-without-switch
+    # left the agent on main, where every commit hit the protected-branch guard
+    # and the run stalled — so branch_create now checks the new branch out too.
     result = _tool("git.branch_create").invoke({"name": "feature"})
 
     assert isinstance(result, GitBranchCreateResult)
     assert result.name == "feature"
     assert result.created is True
+    assert result.switched is True
     assert "feature" in [head.name for head in seeded_repo.heads]
+    assert seeded_repo.active_branch.name == "feature"  # actually on it now
 
 
 def test_checkout_switches_branch_and_reports_previous(seeded_repo) -> None:

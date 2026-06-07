@@ -265,8 +265,9 @@ class GitBranchList(Tool):
 class GitBranchCreate(Tool):
     name = "git.branch_create"
     description = (
-        "Create a local branch from an optional base ref. Synonyms: new branch, "
-        "fork, make branch, branch off, start a branch."
+        "Create a local branch from an optional base ref and switch to it, so "
+        "your next commit lands on the new branch (like git switch -c). Synonyms: "
+        "new branch, fork, make branch, branch off, start a branch."
     )
     Input = GitBranchCreateRequest
     Output = GitBranchCreateResult
@@ -278,7 +279,11 @@ class GitBranchCreate(Tool):
                 repo.create_head(request.name, commit=request.base)
             else:
                 repo.create_head(request.name)
-        return GitBranchCreateResult(name=request.name, created=True)
+            # Switch onto it: "make a branch named X" means start working on X.
+            # Creating without switching left the agent on the protected default
+            # branch, where every commit was correctly rejected and the run stalled.
+            repo.git.checkout(request.name)
+        return GitBranchCreateResult(name=request.name, created=True, switched=True)
 
 
 class GitCheckout(Tool):
