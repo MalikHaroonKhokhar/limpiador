@@ -231,6 +231,14 @@ run:
 # tool call for each capability before using it, so the ceiling needs headroom.
 MAX_CALLS ?= 100
 
+# The model the sandbox pins for *every* turn (override: MODEL=gpt-4o-mini).
+# Production routing sends each turn that follows a tool result — i.e. the whole
+# branch → commit → push → PR execution chain — to the cheap model, which cannot
+# reliably carry that many sequential steps and bails out early. The sandbox is a
+# verification harness, not the cost-optimised path, so it pins the strong model
+# through the documented --model escape hatch to exercise the flow end to end.
+MODEL ?= gpt-4o
+
 # Run the agent against the THROWAWAY sandbox repo (from LIMPIADOR_SANDBOX_REPO),
 # without needing REPO: it clones the sandbox into a temp dir and runs there, so
 # pushes and PRs land on the throwaway, never a real repo. Real mode — costs
@@ -249,7 +257,7 @@ run-sandbox:
 	  git -C "$$work/repo" config user.name "limpiador agent"; \
 	  git -C "$$work/repo" config user.email "agent@limpiador.local"; \
 	  $(REAL_ENV) GITHUB_REPOSITORY="$$LIMPIADOR_SANDBOX_REPO" \
-	    $(PYTHON) -m limpiador.cli run --repo "$$work/repo" --task "$$TASK" --max-calls $(MAX_CALLS) --trace; \
+	    $(PYTHON) -m limpiador.cli run --repo "$$work/repo" --task "$$TASK" --max-calls $(MAX_CALLS) --model $(MODEL) --trace; \
 	  if printf '%s' "$$TASK" | grep -Eiq 'pull request|(^|[^[:alpha:]])pr([^[:alpha:]]|$$)'; then \
 	    base=$$(git -C "$$work/repo" symbolic-ref --short refs/remotes/origin/HEAD | sed 's#^origin/##'); \
 	    verified=0; \
