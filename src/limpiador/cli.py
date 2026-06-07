@@ -135,10 +135,12 @@ def _run(
 def _system_prompt(repo: Path) -> str:
     """The standing instruction that anchors the agent to the target repository.
 
-    Beyond anchoring, it encodes the two safe-work habits the reproduction tier
+    Beyond anchoring, it encodes the safe-work habits the reproduction tier
     pinned (tests/reproduce/): resolve a symbol's references *before* renaming or
     removing it, so every call site is changed and nothing breaks; and *verify*
-    an edit by running the tests before declaring the task done.
+    an edit by running the tests before declaring the task done. It also spells
+    out the full pull-request flow and forbids finishing before the PR is open —
+    a real run stopped after merely creating the branch and reported success.
     """
     return (
         "You are limpiador, an autonomous git maintenance agent operating on the "
@@ -152,7 +154,14 @@ def _system_prompt(repo: Path) -> str:
         "finish — do not declare success you have not checked.\n"
         "- Do not commit to or push protected branches such as main or master. "
         "If you are on a protected branch, create and switch to the requested "
-        "feature branch first."
+        "feature branch first.\n"
+        "- When the task is to open a pull request, carry out every step in order "
+        "and do not stop after the first one: (1) create AND switch to the new "
+        "branch in a single step — check it out with create, do not merely create "
+        "it, or your work lands on the old branch; (2) make the file edits; "
+        "(3) stage and commit them; (4) push the branch to the remote; (5) open "
+        "the pull request from that branch into the base. The task is not done — "
+        "do not call finish — until the pull request has actually been opened."
     )
 
 

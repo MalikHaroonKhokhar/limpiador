@@ -59,6 +59,27 @@ def test_max_calls_must_be_an_integer() -> None:
     assert exit_info.value.code != 0
 
 
+def test_system_prompt_steers_the_whole_pull_request_flow_to_completion() -> None:
+    """A real run stopped after `git.branch_create` and called finish — it never
+    switched, wrote, committed, pushed, or opened the PR, yet reported success.
+    The prompt must spell out the ordered flow *and* forbid finishing before the
+    PR is open. This steering regressed once (dropped when #27 landed), so it is
+    pinned here rather than left to prose."""
+    from pathlib import Path
+
+    from limpiador.cli import _system_prompt
+
+    prompt = _system_prompt(Path("/tmp/target")).lower()
+    # create AND switch — not git.branch_create alone (which leaves you on main)
+    assert "switch" in prompt
+    # the rest of the flow the early-finish run skipped entirely
+    assert "commit" in prompt
+    assert "push" in prompt
+    assert "pull request" in prompt
+    # and the explicit stop condition: don't finish until the PR exists
+    assert "do not call finish" in prompt
+
+
 def test_run_anchors_the_agent_in_the_target_repo(tmp_path, monkeypatch, make_loaded_registry, mock_adapter) -> None:
     """The CLI must run *in* --repo: the git/fs/ast tools resolve the repo
     ambiently from the working directory (§5.3), so a tool dispatched during the
