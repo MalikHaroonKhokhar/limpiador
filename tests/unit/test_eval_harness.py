@@ -78,8 +78,8 @@ def test_rename_outcome_check_detects_an_incomplete_rename() -> None:
     checkout = checkout_fixture("rename_symbol")
     try:
         assert check(checkout), "the un-renamed fixture must fail the outcome check"
-        # A complete rename across both files passes.
-        for rel in ("pkg/core.py", "pkg/consumer.py"):
+        # A complete rename across all three known sites passes.
+        for rel in ("pkg/core.py", "pkg/consumer.py", "pkg/report.py"):
             path = checkout / rel
             path.write_text(path.read_text().replace("compute", "calculate"))
         assert check(checkout) == []

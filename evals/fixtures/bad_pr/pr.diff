@@ -1,0 +1,13 @@
+diff --git a/inventory.py b/inventory.py
+index 6d62edd..0ff8900 100644
+--- a/inventory.py
++++ b/inventory.py
+@@ -4,7 +4,7 @@ change is captured in pr.diff — and that change regressed `apply_restock`."""
+ 
+ def apply_restock(stock, amount):
+     # Regression proposed by the PR: a restock must ADD to stock, not subtract.
+-    return stock + amount
++    return stock - amount
+ 
+ 
+ def is_in_stock(stock):
