@@ -68,16 +68,18 @@ def _failing_test_outcome(checkout: Path) -> list[str]:
 
 def _rename_outcome(checkout: Path) -> list[str]:
     core = (checkout / "pkg" / "core.py").read_text()
-    consumer = (checkout / "pkg" / "consumer.py").read_text()
     failures: list[str] = []
     if "def compute(" in core:
         failures.append("compute is still defined under its old name in core.py")
     if "calculate" not in core:
         failures.append("the new name 'calculate' is absent from core.py")
-    if "compute(" in consumer:
-        failures.append("the call site in consumer.py was not renamed")
-    if "calculate(" not in consumer:
-        failures.append("consumer.py does not call the renamed function")
+    # consumer.py and report.py are the two call-site files; both must be reached.
+    for site in ("consumer.py", "report.py"):
+        source = (checkout / "pkg" / site).read_text()
+        if "compute(" in source:
+            failures.append(f"the call site in {site} was not renamed")
+        if "calculate(" not in source:
+            failures.append(f"{site} does not call the renamed function")
     return failures
 
 
