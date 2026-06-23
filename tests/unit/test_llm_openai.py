@@ -137,6 +137,23 @@ def test_complete_omits_tools_when_none_are_active() -> None:
     assert "tools" not in client.create_kwargs
 
 
+def test_complete_omits_temperature_by_default_preserving_provider_default() -> None:
+    adapter, client = _adapter(_response(content="ok"))
+
+    adapter.complete(messages=[{"role": "user", "content": "go"}])
+
+    assert "temperature" not in client.create_kwargs
+
+
+def test_complete_sends_temperature_when_the_knob_is_set() -> None:
+    client = _StubClient(_response(content="ok"))
+    adapter = OpenAIAdapter(model="stub-model", client=client, temperature=0.0)
+
+    adapter.complete(messages=[{"role": "user", "content": "go"}])
+
+    assert client.create_kwargs["temperature"] == 0.0
+
+
 def test_missing_api_key_raises_config_error_not_a_crash(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
 

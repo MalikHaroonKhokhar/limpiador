@@ -258,10 +258,15 @@ class OpenAIAdapter(LLMAdapter):
         routing: RoutingConfig | None = None,
         tracer: Tracer = emit,
         resilience: Resilience | None = None,
+        temperature: float | None = None,
     ) -> None:
         # An explicit model (flag or env) pins one model for every turn, bypassing
         # routing — the operator's escape hatch. Otherwise routing decides per turn.
         self._pinned_model = model or os.environ.get(OPENAI_MODEL_ENV) or None
+        # When set, sampling temperature is sent on every request; left None it is
+        # omitted, so the provider default stands — production behaviour unchanged.
+        # The eval harness pins it to 0 so its pass/fail gate is deterministic.
+        self._temperature = temperature
         self._routing = routing or DEFAULT_ROUTING
         self._trace = tracer
         # Resilience for the one external call this adapter makes (§13): a token
@@ -294,6 +299,8 @@ class OpenAIAdapter(LLMAdapter):
         request: dict[str, Any] = {"model": model, "messages": messages}
         if tools:
             request["tools"] = tools
+        if self._temperature is not None:
+            request["temperature"] = self._temperature
         response = self._create(request)
         return self._parse_response(response, model=model, route=kind.value, tier=tier)
 
