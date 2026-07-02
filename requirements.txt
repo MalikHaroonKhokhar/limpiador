@@ -1,0 +1,24 @@
+# requirements.txt — pip-installable mirror of pyproject.toml's constraints.
+#
+# pyproject.toml is the canonical source of truth; `make install` uses
+# `pip install -e ".[dev]"`. This file is a convenience for environments that
+# install from a plain requirements file. Keep the constraints in sync with
+# pyproject.toml (same lower bounds).
+
+# ---- runtime -----------------------------------------------------------------
+# Deliberately thin: typed contracts are core (every tool's I/O is a pydantic
+# model — ARCHITECTURE.md §8). Mock-mode development and the whole test suite
+# need nothing beyond this.
+pydantic>=2.9
+
+# ---- real mode + development (pyproject's `dev` extra) ------------------------
+# The provider SDK, the parser, and the git/github clients — needed to run
+# limpiador for real and to build/test it.
+pytest>=8.2
+pytest-cov>=5.0
+pytest-xdist>=3.6
+openai>=1.40
+tree-sitter>=0.23
+tree-sitter-python>=0.23
+gitpython>=3.1.43
+pygithub>=2.4
