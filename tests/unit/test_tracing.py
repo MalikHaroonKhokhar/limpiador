@@ -15,7 +15,6 @@ These tests pin that contract and the eval-harness helpers built on top of it:
 from __future__ import annotations
 
 from types import SimpleNamespace
-from typing import Any
 
 from limpiador.agent.llm import DEFAULT_ROUTING, OpenAIAdapter
 from limpiador.observability.tracing import (

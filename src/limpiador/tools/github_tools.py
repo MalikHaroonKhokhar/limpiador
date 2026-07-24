@@ -114,7 +114,9 @@ _DEFAULT_SESSION: GitHubSession | None = None
 
 def _default_session() -> GitHubSession:
     """The shared production session, built once from the ambient credentials."""
-    global _DEFAULT_SESSION
+    # A deliberate module-level singleton: the session holds one authenticated
+    # client, and rebuilding it per call would re-authenticate on every tool use.
+    global _DEFAULT_SESSION  # noqa: PLW0603 - intentional lazy cache
     if _DEFAULT_SESSION is None:
         _DEFAULT_SESSION = _build_default_session()
     return _DEFAULT_SESSION

@@ -29,6 +29,7 @@ from limpiador.schemas import (
     CiTriggerResult,
     CoverageResult,
     FsReadFileRequest,
+    LintResult,
     TestFailure,
     TestResult,
 )
@@ -148,12 +149,30 @@ def test_coverage_reports_percentages(tmp_path, monkeypatch) -> None:
         ("test.format", {"path": ".", "check": True}),
     ],
 )
-def test_a_missing_toolchain_raises_a_typed_error(suite, name, arguments) -> None:
-    # ruff / mypy are not installed in this environment, so these tools cannot
-    # run — but they fail with a typed ToolError the loop can fold and adapt to,
-    # not a raw FileNotFoundError or ModuleNotFoundError.
+def test_a_missing_toolchain_raises_a_typed_error(suite, name, arguments, monkeypatch) -> None:
+    """An absent toolchain surfaces as a typed ToolError the loop can fold and
+    adapt to — never a raw FileNotFoundError or ModuleNotFoundError.
+
+    The absence is *staged*, not inferred from the ambient environment: ruff and
+    mypy are dev dependencies now that CI gates on them (HAR-34), so a test that
+    relied on them being missing would pass only by accident of the machine.
+    """
+    monkeypatch.setattr(test_tools.importlib.util, "find_spec", lambda module: None)
+
     with pytest.raises(ToolError):
         _tool(name).invoke(arguments)
+
+
+def test_lint_runs_the_real_toolchain_and_reports_structured_issues(suite) -> None:
+    """The other half of the contract: with ruff present, the tool really runs it
+    and returns a typed LintResult rather than a string blob."""
+    (suite / "messy.py").write_text("import os\n")  # F401: imported but unused
+
+    result = _tool("test.lint").invoke({"path": "."})
+
+    assert isinstance(result, LintResult)
+    assert result.passed is False
+    assert any(issue.file.endswith("messy.py") for issue in result.issues)
 
 
 # ---- ci.* : composing the github namespace through a fake session -----------

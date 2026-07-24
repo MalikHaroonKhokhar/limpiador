@@ -61,6 +61,7 @@ def run_tests(checkout: Path) -> list[str]:
         cwd=checkout,
         capture_output=True,
         text=True,
+        check=False,
     )
     if proc.returncode == 0:
         return []

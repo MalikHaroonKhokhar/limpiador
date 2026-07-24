@@ -78,6 +78,7 @@ def _run_cli(repo: Path, task: str, *, max_calls: int = 20) -> subprocess.Comple
         capture_output=True,
         text=True,
         timeout=_CLI_TIMEOUT_S,
+        check=False,
     )
 
 

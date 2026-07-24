@@ -13,9 +13,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from limpiador.observability.tracing import Tracer
-
 from evals.cases._base import EvalCase, run_tests
+from limpiador.observability.tracing import Tracer
 
 _TASK = (
     "A test in this repository is failing. Find the cause, fix it so all tests "

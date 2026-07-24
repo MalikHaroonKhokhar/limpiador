@@ -32,6 +32,7 @@ from limpiador.agent.llm import LLMAdapter
 from limpiador.agent.loop import RunResult, run
 from limpiador.observability.tracing import Tracer
 from limpiador.schemas import ReviewResult, Verdict
+from limpiador.tools.base import Tool
 from limpiador.tools.registry import ToolRegistry
 
 # The read-only capabilities the reviewer is scoped to. Enforced at construction
@@ -75,7 +76,7 @@ REVIEWER_SYSTEM_PROMPT = (
 _DEFAULT_TASK = "Review this pull request for correctness, security, and clarity."
 
 
-def _read_only_tools() -> list[object]:
+def _read_only_tools() -> list[Tool]:
     """The constructed tool instances that fall inside the reviewer's scope."""
     from limpiador.tools import ast_tools, fs_tools, github_tools
 

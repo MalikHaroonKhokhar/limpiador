@@ -56,6 +56,7 @@ def _tests_fail(checkout: Path) -> bool:
         cwd=checkout,
         capture_output=True,
         text=True,
+        check=False,
     )
     return proc.returncode != 0
 
@@ -133,6 +134,7 @@ def test_bad_pr_diff_applies_in_reverse_to_a_green_base() -> None:
             cwd=checkout,
             capture_output=True,
             text=True,
+            check=False,
         )
         assert revert.returncode == 0, f"pr.diff must reverse cleanly: {revert.stderr}"
         assert _tests_pass(checkout), "the pre-PR base must be green"

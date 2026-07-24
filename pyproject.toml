@@ -32,6 +32,8 @@ dev = [
   "tree-sitter-python>=0.23",
   "gitpython>=3.1.43",
   "pygithub>=2.4",
+  "ruff>=0.6",
+  "mypy>=1.11",
 ]
 
 [project.scripts]
@@ -58,3 +60,71 @@ markers = [
   "e2e: real-mode end-to-end test (REAL OpenAI + REAL git/github on a throwaway repo); deselect with -m 'not e2e'",
   "reproduce: real-model reproduction test — one per observed behavior, TDD red→green; skipped without OPENAI_API_KEY",
 ]
+
+# ============================================================================
+# ruff — lint (CI gate, HAR-34)
+# ============================================================================
+# The rule set is named configuration, not a default: ruff's implicit defaults
+# shift between releases, and a lint gate that silently changes shape is not a
+# gate. Only formatting is deliberately left out — `ruff format` would rewrite
+# most of the tree, which is a separate concern from linting.
+[tool.ruff]
+target-version = "py311"
+line-length = 110
+extend-exclude = ["venv", "venv.bak", "evals/fixtures"]
+
+[tool.ruff.lint]
+select = [
+  "E", "W",   # pycodestyle
+  "F",        # pyflakes — unused imports/names, real mistakes
+  "I",        # isort — one deterministic import order
+  "UP",       # pyupgrade — the project is 3.11+, so say so in the syntax
+  "B",        # bugbear — mutable defaults, shadowed loop vars
+  "PIE",      # unnecessary/duplicate constructs
+  "PLW",      # pylint warnings (e.g. subprocess.run without an explicit check)
+  "RUF",      # ruff's own checks, incl. unused noqa
+]
+ignore = [
+  # `class X(str, Enum)` → `StrEnum` is not a behaviour-preserving rewrite:
+  # StrEnum's __str__ returns the value, so every f-string and log line carrying
+  # one of these enums would silently change text. The pydantic boundary relies
+  # on the current form. Not a lint fix — it would be its own considered change.
+  "UP042",
+  # The CLI's summary lines use real typography (e.g. `12 × fs.read_file`).
+  # Flagging those glyphs as "ambiguous" is noise, not a defect.
+  "RUF001",
+]
+
+[tool.ruff.lint.per-file-ignores]
+# The eval fixtures and reproduction fixtures are *deliberately* broken or
+# oddly-shaped source used as test input, not code we ship.
+"tests/**" = ["E501"]
+
+# ============================================================================
+# mypy — type checking (CI gate, HAR-34)
+# ============================================================================
+# Typed contracts are the project's core claim (every tool's I/O is a pydantic
+# model), so the shipped package is checked. Tests and evals are excluded: they
+# construct deliberately-invalid payloads to prove validation rejects them.
+[tool.mypy]
+python_version = "3.11"
+files = ["src/limpiador"]
+ignore_missing_imports = true
+warn_unused_configs = true
+# Every Tool narrows `run(request: Schema)` to its own declared Input. mypy reads
+# that as a Liskov violation, but it is the contract: `Tool.invoke` validates the
+# payload into `Input` *before* calling `run`, so `run` cannot receive anything
+# else. Expressing it to mypy's satisfaction means making Tool generic in
+# (Input, Output) across all 57 tools — a refactor in its own right, not a lint fix.
+disable_error_code = ["override"]
+
+# The tool adapters sit against third-party libraries whose stubs erase types:
+# PyGithub hands back `object` through the boundary, and tree-sitter's `node.text`
+# is `bytes | None` at every access. Checking them today means ~40 errors that are
+# stub artefacts rather than defects, so they are analysed (imports still resolve
+# and the callers above are checked against them) but not reported on. The typed
+# spine — schemas, the agent loop, observability, the CLI — is fully checked, and
+# that is where the project's typing claim actually lives.
+[[tool.mypy.overrides]]
+module = "limpiador.tools.*"
+ignore_errors = true

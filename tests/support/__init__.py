@@ -10,4 +10,4 @@ Importing this package registers the mock under ``LIMPIADOR_LLM=mock`` (see
 layer is loaded — and only then.
 """
 
-from . import mock_llm as mock_llm  # noqa: F401 — import for its registration side effect
+from . import mock_llm as mock_llm

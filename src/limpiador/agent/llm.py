@@ -104,7 +104,7 @@ DEFAULT_ROUTING = RoutingConfig(
 )
 
 
-def classify_turn(messages: "Messages") -> TurnKind:
+def classify_turn(messages: Messages) -> TurnKind:
     """Read the turn's purpose from the transcript shape (ARCHITECTURE.md §10).
 
     Before any tool result exists, the model is forming its approach — planning,
@@ -118,8 +118,8 @@ def classify_turn(messages: "Messages") -> TurnKind:
 
 
 def cache_prefix(
-    messages: "Messages",
-    tools: "ToolSchemas | None",
+    messages: Messages,
+    tools: ToolSchemas | None,
     *,
     core_tool_names: tuple[str, ...] = CORE_TOOL_NAMES,
 ) -> dict[str, Any]:
@@ -137,8 +137,8 @@ def cache_prefix(
 
 
 def prefix_fingerprint(
-    messages: "Messages",
-    tools: "ToolSchemas | None",
+    messages: Messages,
+    tools: ToolSchemas | None,
     *,
     core_tool_names: tuple[str, ...] = CORE_TOOL_NAMES,
 ) -> str:
@@ -164,7 +164,7 @@ def _schema_name(schema: dict[str, Any]) -> str:
     return ""
 
 
-def _priced(tier: "ModelTier | None", usage: "TokenUsage | None") -> float | None:
+def _priced(tier: ModelTier | None, usage: TokenUsage | None) -> float | None:
     """The USD cost of one call from its tier's per-million prices, or None.
 
     None when the tier is unknown (a pinned model has no configured price) or the
@@ -334,7 +334,7 @@ class OpenAIAdapter(LLMAdapter):
         *,
         model: str = "",
         route: str | None = None,
-        tier: "ModelTier | None" = None,
+        tier: ModelTier | None = None,
     ) -> LLMResponse:
         """Normalize a provider response into a typed LLMResponse.
 

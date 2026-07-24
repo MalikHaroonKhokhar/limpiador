@@ -18,7 +18,7 @@ if TYPE_CHECKING:  # avoid an import cycle — report only reads EvalResult's fi
 _RULE = "=" * 64
 
 
-def render(results: "Sequence[EvalResult]") -> str:
+def render(results: Sequence[EvalResult]) -> str:
     """Render eval results into a human-readable report string."""
     passed = sum(1 for result in results if result.passed)
     total = len(results)
@@ -32,7 +32,7 @@ def render(results: "Sequence[EvalResult]") -> str:
     return "\n".join(lines)
 
 
-def _render_case(result: "EvalResult") -> list[str]:
+def _render_case(result: EvalResult) -> list[str]:
     """One case's block: its badge, the tool-call trace, and any failures."""
     badge = "PASS" if result.passed else "FAIL"
     sequence = " → ".join(result.tool_calls) if result.tool_calls else "(no tool calls)"

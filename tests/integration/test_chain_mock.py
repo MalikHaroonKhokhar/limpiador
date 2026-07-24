@@ -12,9 +12,8 @@ runs is the genuine producer→consumer handoff, not a hand-faked argument.
 
 from __future__ import annotations
 
-from support.mock_llm import MockLLM, scenario, tool_call, tool_turn
-
 import pytest
+from support.mock_llm import MockLLM, scenario, tool_call, tool_turn
 
 from limpiador.agent.loop import run
 from limpiador.tools import ast_tools, test_tools

@@ -30,7 +30,6 @@ from types import SimpleNamespace
 
 import pytest
 from pydantic import ValidationError
-
 from support.mock_llm import MockLLM, scenario, tool_call, tool_turn
 
 from limpiador.observability.errors import MalformedInputError

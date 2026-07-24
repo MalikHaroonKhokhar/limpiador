@@ -19,11 +19,10 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
 
-from limpiador.observability.tracing import Tracer
-from limpiador.schemas import Finding, ReviewResult, Severity, Verdict
-
 from evals.cases import CASES
 from evals.harness import checkout_fixture
+from limpiador.observability.tracing import Tracer
+from limpiador.schemas import Finding, ReviewResult, Severity, Verdict
 
 
 def _case(name: str):

@@ -22,3 +22,7 @@ tree-sitter>=0.23
 tree-sitter-python>=0.23
 gitpython>=3.1.43
 pygithub>=2.4
+
+# ---- static checks (the CI gates: `make lint`, `make typecheck`) --------------
+ruff>=0.6
+mypy>=1.11

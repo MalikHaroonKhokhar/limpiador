@@ -1,0 +1,88 @@
+# The free, deterministic gate (HAR-34, property #4).
+#
+# Everything here runs in MOCK mode: a deterministic stub model, temp git
+# fixtures, no network calls to any provider. That is what makes this workflow
+# safe to run on every push — it needs **no secrets at all**. A fork PR gets the
+# same green tick as a maintainer push, because there is nothing to leak and
+# nothing to spend.
+#
+# The two real-mode tiers are deliberately absent: `-m "not e2e"` deselects the
+# E2E tests, and the eval harness (`make eval`) and reproduction tier are never
+# invoked. Those cost credits and touch a throwaway repo, so they stay manual.
+name: CI
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+  workflow_dispatch:
+
+# A new push to the same branch makes the older run obsolete — cancel it rather
+# than paying for a result nobody will read.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  # Belt and braces: the Makefile's mock targets already set this per-recipe, but
+  # pinning it at the job level means nothing in this workflow can reach a real
+  # provider even if a target were mis-wired.
+  LIMPIADOR_LLM: mock
+
+jobs:
+  check:
+    name: lint · typecheck · free suite
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        # The floor the project declares (requires-python >=3.11) and a current
+        # release, so a 3.11-only regression cannot hide behind a newer local venv.
+        python-version: ["3.11", "3.13"]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+          cache-dependency-path: pyproject.toml
+
+      - name: Install
+        # The Makefile drives everything through ./venv, so build the venv where
+        # it expects rather than teaching CI a second layout.
+        run: |
+          python -m venv venv
+          ./venv/bin/python -m pip install --upgrade pip
+          ./venv/bin/python -m pip install -e ".[dev]"
+
+      - name: Lint
+        run: make lint
+
+      - name: Typecheck
+        run: make typecheck
+
+      - name: Free suite (mock only, no secrets)
+        run: make test
+
+      - name: Coverage
+        run: make test-coverage
+
+      - name: Upload coverage
+        # Publish the report even when the suite fails — a red run is exactly
+        # when you want to see what was and was not exercised.
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-py${{ matrix.python-version }}
+          path: |
+            htmlcov/
+            coverage.xml
+          if-no-files-found: warn
+          retention-days: 14

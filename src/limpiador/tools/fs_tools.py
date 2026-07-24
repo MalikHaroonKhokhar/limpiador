@@ -350,7 +350,7 @@ def _parse_hunk(lines: list[str], index: int) -> tuple[_Hunk, int]:
     index += 1
     while index < len(lines):
         entry = lines[index]
-        if entry.startswith("--- ") or entry.startswith("@@") or entry[:1] not in " +-":
+        if entry.startswith(("--- ", "@@")) or entry[:1] not in " +-":
             break
         body.append(entry)
         index += 1
