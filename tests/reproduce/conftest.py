@@ -28,6 +28,24 @@ def _require_openai_key() -> None:
         pytest.skip("reproduction tier is real-model; set OPENAI_API_KEY to run it")
 
 
+@pytest.fixture(autouse=True)
+def _anchor_github_to_the_sandbox(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Point the ``github.*`` tools at the configured throwaway repo.
+
+    The tier drives the *whole* 57-tool registry, so the agent may reach for a
+    ``github.*`` tool at any point. A seeded temp repo has no origin, and without
+    a slug those tools raise a **fatal** ConfigError that kills the run outright —
+    losing the behaviour under test to an unrelated crash. Anchoring
+    ``GITHUB_REPOSITORY`` to ``LIMPIADOR_SANDBOX_REPO`` (the throwaway repo this
+    project already designates for real-mode work) makes such a call resolve and
+    fail recoverably instead. Reproduction tasks are local, so it is not called in
+    practice; when no sandbox is configured, nothing is set.
+    """
+    sandbox = os.environ.get("LIMPIADOR_SANDBOX_REPO")
+    if sandbox and not os.environ.get("GITHUB_REPOSITORY"):
+        monkeypatch.setenv("GITHUB_REPOSITORY", sandbox)
+
+
 @pytest.fixture
 def run_agent():
     """Drive the production agent on the current repo and return its RunResult.

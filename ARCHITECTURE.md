@@ -295,10 +295,28 @@ throws away context the very next step needs; compacting too late blows the
 window. The threshold and the eviction policy are configuration, visible and
 tunable.
 
+**The plan is written by the agent, in protocol verbs.** Durable state is only
+meaningful if something fills it, so the fixed core carries two verbs alongside
+`finish`: `plan_add(sub_goals)` commits the steps the agent intends to work
+through, and `plan_resolve(sub_goal)` marks one done. Like `finish`, they act on
+the *run*, not the repo — the registry validates them and the loop applies them
+to the context. Because they land in durable state, compaction never touches
+them: the agent can lose every raw file it read and still know what it planned,
+what it finished, and what remains.
+
 The result is that limpiador can run a twenty-plus-call investigation while the
 context stays roughly flat in size, because raw detail is continuously
 distilled into structured findings. The plan stays coherent because the plan
 lives in durable state that is never evicted.
+
+Every compaction pass that evicts anything emits the `[CONTEXT COMPACTION]`
+trace tag recording how many payloads it dropped and the footprint before and
+after, so the property is *observable in a run's trace* rather than merely
+claimed. A captured real session — 34 tool calls, 10 compactions, a 7-step plan
+carried to completion without re-litigating a resolved step — is committed at
+`traces/har-33/long-session.md`, and the path is guarded by
+`tests/reproduce/test_long_session_stays_coherent.py` (real model) and
+`tests/integration/test_long_session_coherence.py` (deterministic mock).
 
 ---
 

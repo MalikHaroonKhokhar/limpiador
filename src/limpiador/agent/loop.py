@@ -9,9 +9,14 @@ repeat.
 The loop does only orchestration. It does not know what any individual tool
 does, does not parse free text, and does not branch on tool identity — that
 ignorance is deliberate, and it is what keeps the system out of the
-fifty-conditional-dispatch anti-pattern the brief warns against. The single
-exception is the ``finish`` protocol verb: recognizing the one terminal signal
-is how a turn cycle ends, the way a function recognizes ``return``.
+fifty-conditional-dispatch anti-pattern the brief warns against.
+
+The one exception is a small, fixed *protocol vocabulary* — verbs that act on the
+run rather than on the repo. ``finish`` is the terminal signal, recognized the way
+a function recognizes ``return``. ``plan_add`` / ``plan_resolve`` write the agent's
+plan into durable working memory, which is what lets a twenty-plus-call session
+survive compaction with its plan intact (§7, property #3). The vocabulary is
+closed and repo-agnostic: no repo-acting tool is ever named here.
 """
 
 from __future__ import annotations
@@ -31,7 +36,7 @@ from limpiador.agent.llm import LLMAdapter, Messages
 from limpiador.observability.errors import ToolError
 from limpiador.observability.tracing import Tracer
 from limpiador.schemas import LLMResponse, ToolCall
-from limpiador.tools.registry import FINISH, ToolRegistry
+from limpiador.tools.registry import FINISH, PLAN_ADD, PLAN_RESOLVE, ToolRegistry
 
 
 @dataclass(frozen=True)
@@ -51,6 +56,14 @@ class RunResult:
     tool_calls: tuple[str, ...]
     messages: list[dict[str, object]] = field(default_factory=list)
     trace: Tracer | None = None
+    # The run's working memory. Exposed so a caller can read the *durable* state a
+    # long session ended with — the plan and which sub-goals it resolved — which
+    # is what property #3 is judged on (ARCHITECTURE.md §7).
+    context: Context | None = None
+    # The protocol verbs the model issued, in order, with their arguments. Enough
+    # to check plan coherence (nothing resolved twice) without re-reading the
+    # transcript.
+    protocol_calls: tuple[ToolCall, ...] = ()
 
 
 def run(
@@ -85,13 +98,26 @@ def run(
     # The same tracer captures the context's tags, so the run trace is unified.
     context = Context(task, threshold_tokens=threshold_tokens, tracer=tracer)
     dispatched: list[str] = []
+    protocol: list[ToolCall] = []
     turns = 0
+
+    def _result(result: str | None, *, aborted: bool) -> RunResult:
+        return RunResult(
+            result,
+            aborted=aborted,
+            turns=turns,
+            tool_calls=tuple(dispatched),
+            messages=messages,
+            trace=tracer,
+            context=context,
+            protocol_calls=tuple(protocol),
+        )
 
     while True:
         try:
             guard.check()
         except RunAborted:
-            return RunResult(None, aborted=True, turns=turns, tool_calls=tuple(dispatched), messages=messages, trace=tracer)
+            return _result(None, aborted=True)
 
         response = _timed_complete(adapter, messages, registry, tracer)
         turns += 1
@@ -99,7 +125,7 @@ def run(
 
         # A model turn with no tool calls is a plain answer — the run is done.
         if not response.tool_calls:
-            return RunResult(response.text, aborted=False, turns=turns, tool_calls=tuple(dispatched), messages=messages, trace=tracer)
+            return _result(response.text, aborted=False)
 
         # Dispatch the turn's calls sequentially, in order (see the docstring on
         # parallel-vs-concurrent), folding each typed result into the transcript.
@@ -110,6 +136,12 @@ def run(
             message = _timed_dispatch(registry, call, tracer)
             messages.append(message)
             _record_payload(context, call, message)
+            # Protocol verbs act on the *run*, not the repo: the plan verbs write
+            # the agent's plan into durable working memory. This is the same
+            # narrow exception the loop already makes for `finish` — a fixed
+            # protocol vocabulary, not knowledge of any repo-acting tool.
+            if _apply_protocol_verb(context, call):
+                protocol.append(call)
             if call.name == FINISH and finished is None:
                 finished = _finish_text(message)
 
@@ -122,7 +154,7 @@ def run(
         _compact(context, messages)
 
         if finished is not None:
-            return RunResult(finished, aborted=False, turns=turns, tool_calls=tuple(dispatched), messages=messages, trace=tracer)
+            return _result(finished, aborted=False)
 
 
 def _initial_messages(task: str, system_prompt: str | None) -> Messages:
@@ -246,6 +278,27 @@ def _record_payload(context: Context, call: ToolCall, message: dict[str, object]
         kind=PayloadKind.RESULT,
         summary=f"[{call.name}] result elided after compaction ({len(content)} chars).",
     )
+
+
+def _apply_protocol_verb(context: Context, call: ToolCall) -> bool:
+    """Apply a plan protocol verb to durable working memory; True if it was one.
+
+    ``plan_add`` commits the sub-goals the agent intends to work through;
+    ``plan_resolve`` marks one done so it is never re-litigated. Both write to the
+    Context, which compaction never evicts — that is precisely why the plan
+    survives a twenty-plus-call session (§7). Anything else is a repo-acting tool
+    the loop stays ignorant of.
+    """
+    if call.name == PLAN_ADD:
+        for goal in call.arguments.get("sub_goals") or []:
+            context.add_sub_goal(str(goal))
+        return True
+    if call.name == PLAN_RESOLVE:
+        goal = str(call.arguments.get("sub_goal") or "").strip()
+        if goal:
+            context.resolve_sub_goal(goal)
+        return True
+    return False
 
 
 def _compact(context: Context, messages: Messages) -> None:
