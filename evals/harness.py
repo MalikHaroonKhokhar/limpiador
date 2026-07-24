@@ -25,6 +25,8 @@ from pathlib import Path
 
 from git import Repo
 
+from evals.cases import CASES, REVIEWER, EvalCase
+from evals.report import render
 from limpiador.agent.guard import CallGuard
 from limpiador.agent.llm import (
     DEFAULT_ROUTING,
@@ -37,9 +39,6 @@ from limpiador.cli import _system_prompt
 from limpiador.observability.tracing import Tracer
 from limpiador.subagents.reviewer import spawn_reviewer
 from limpiador.tools.registry import build_registry
-
-from evals.cases import CASES, REVIEWER, EvalCase
-from evals.report import render
 
 _FIXTURES = Path(__file__).resolve().parent / "fixtures"
 _HARNESS_IDENTITY = ("Eval Harness", "eval@example.com")

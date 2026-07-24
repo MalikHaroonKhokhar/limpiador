@@ -289,7 +289,11 @@ class TestFormat(Tool):
         _require("ruff")
         flag = ["--check"] if request.check else []
         proc = _run([sys.executable, "-m", "ruff", "format", *flag, request.path])
-        changed = [line.split(" ", 1)[-1] for line in proc.stdout.splitlines() if line.startswith("Would reformat")]
+        changed = [
+            line.split(" ", 1)[-1]
+            for line in proc.stdout.splitlines()
+            if line.startswith("Would reformat")
+        ]
         return FormatResult(ok=proc.returncode == 0, changed=changed)
 
 
@@ -307,7 +311,7 @@ class CiTriggerCi(_GitHubTool):
         def operation() -> int:
             repo = self._repo()
             repo.get_workflow(request.workflow).create_dispatch(request.ref)
-            return list(repo.get_workflow_runs(branch=request.ref))[0].id
+            return next(iter(repo.get_workflow_runs(branch=request.ref))).id
 
         run_id = self._call(operation)
         return CiTriggerResult(run_id=run_id, queued=True)

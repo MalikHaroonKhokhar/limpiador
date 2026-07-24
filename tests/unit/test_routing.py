@@ -147,13 +147,13 @@ def test_the_stable_prefix_is_byte_identical_as_the_conversation_grows() -> None
 def test_dynamically_loaded_tools_do_not_change_the_stable_prefix() -> None:
     core_only = prefix_fingerprint([_SYSTEM], _core_schemas())
     with_loaded = prefix_fingerprint(
-        [_SYSTEM], _core_schemas() + [_schema("fs_read_file"), _schema("ast_rename_symbol")]
+        [_SYSTEM], [*_core_schemas(), _schema("fs_read_file"), _schema("ast_rename_symbol")]
     )
     assert core_only == with_loaded  # only system + core schemas form the prefix
 
 
 def test_the_prefix_captures_only_system_and_core_not_the_tail() -> None:
-    prefix = cache_prefix([_SYSTEM, _USER, _TOOL_RESULT], _core_schemas() + [_schema("fs_read_file")])
+    prefix = cache_prefix([_SYSTEM, _USER, _TOOL_RESULT], [*_core_schemas(), _schema("fs_read_file")])
     assert prefix["system"] == [_SYSTEM]
     assert [c["function"]["name"] for c in prefix["core_tools"]] == list(CORE_TOOL_NAMES)
 

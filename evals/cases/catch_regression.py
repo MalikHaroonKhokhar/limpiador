@@ -15,10 +15,9 @@ orchestration primitive, not a registry tool the loop can call.
 
 from __future__ import annotations
 
+from evals.cases._base import REVIEWER, EvalCase, reviewer_read_only_names
 from limpiador.observability.tracing import Tracer
 from limpiador.schemas import ReviewResult, Severity, Verdict
-
-from evals.cases._base import REVIEWER, EvalCase, reviewer_read_only_names
 
 _TASK = (
     "Review the proposed change in this pull request for correctness. The complete "

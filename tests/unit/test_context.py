@@ -18,8 +18,6 @@ never exact token counts, so the estimator can be retuned without churn here.
 
 from __future__ import annotations
 
-import pytest
-
 from limpiador.agent.context import (
     DEFAULT_COMPACTION_THRESHOLD_TOKENS,
     Context,
@@ -36,7 +34,7 @@ def _big(label: str, *, tokens: int = 200) -> str:
     return f"{label}:" + "x" * (tokens * 4)
 
 
-def _recording_tracer() -> tuple[list[tuple[str, str]], "callable"]:
+def _recording_tracer() -> tuple[list[tuple[str, str]], callable]:
     events: list[tuple[str, str]] = []
 
     def trace(tag: str, message: str = "") -> None:

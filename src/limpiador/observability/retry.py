@@ -142,7 +142,13 @@ class Resilience:
         return TokenBucket(self.rate_limit, clock=self.clock, sleep=self.sleep)
 
 
-def resilient_call(fn: Callable[[], T], *, limiter: TokenBucket, policy: RetryPolicy = DEFAULT_RETRY, sleep: Sleep = time.sleep) -> T:
+def resilient_call(
+    fn: Callable[[], T],
+    *,
+    limiter: TokenBucket,
+    policy: RetryPolicy = DEFAULT_RETRY,
+    sleep: Sleep = time.sleep,
+) -> T:
     """Run ``fn`` through the rate limiter and the retry policy.
 
     A token is acquired before *each* attempt — including retries — so a retried

@@ -18,7 +18,7 @@ depend on any particular tool's schema.
 
 from __future__ import annotations
 
-from support.mock_llm import MockLLM, final_turn, scenario, tool_call, tool_turn
+from support.mock_llm import MockLLM, scenario, tool_call, tool_turn
 
 from limpiador.agent.guard import CallGuard
 from limpiador.agent.loop import RunResult, run

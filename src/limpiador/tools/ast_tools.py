@@ -161,7 +161,11 @@ def _file_symbols(root: Node, file: str) -> list[Symbol]:
     symbols: list[Symbol] = []
     for node in root.children:
         if node.type == "function_definition":
-            symbols.append(Symbol(name=_field_text(node, "name"), kind="function", file=file, line=_line(node)))
+            symbols.append(
+                Symbol(
+                    name=_field_text(node, "name"), kind="function", file=file, line=_line(node)
+                )
+            )
         elif node.type == "class_definition":
             symbols.append(Symbol(name=_field_text(node, "name"), kind="class", file=file, line=_line(node)))
             symbols.extend(_method_symbols(node, file))
@@ -176,7 +180,11 @@ def _file_symbols(root: Node, file: str) -> list[Symbol]:
 def _is_attribute_name(node: Node) -> bool:
     """True for the ``.attr`` half of an attribute access — not a free reference."""
     parent = node.parent
-    return parent is not None and parent.type == "attribute" and parent.child_by_field_name("attribute") == node
+    return (
+        parent is not None
+        and parent.type == "attribute"
+        and parent.child_by_field_name("attribute") == node
+    )
 
 
 def _is_definition_name(node: Node) -> bool:
@@ -370,7 +378,12 @@ class AstFindDefinition(Tool):
         for path in files:
             for symbol in _file_symbols(_parse(path.read_bytes()), _rel(path)):
                 if symbol.name == request.symbol:
-                    return AstDefinition(symbol=symbol.name, file=symbol.file, line=symbol.line, kind=symbol.kind)
+                    return AstDefinition(
+                        symbol=symbol.name,
+                        file=symbol.file,
+                        line=symbol.line,
+                        kind=symbol.kind,
+                    )
         raise NotFoundError(f"no definition of {request.symbol!r} found")
 
 
@@ -546,9 +559,13 @@ class AstExtractFunction(Tool):
         indent = len(span[0]) - len(span[0].lstrip())
         body = "\n".join("    " + line[indent:] for line in span)
         new_function = f"def {request.name}():\n{body}"
-        remaining = lines[: request.line_start - 1] + [f"{' ' * indent}{request.name}()"] + lines[request.line_end :]
+        remaining = [
+            *lines[: request.line_start - 1],
+            f"{' ' * indent}{request.name}()",
+            *lines[request.line_end :],
+        ]
         definition_line = len(remaining) + 2
-        path.write_text("\n".join(remaining + ["", new_function]))
+        path.write_text("\n".join([*remaining, "", new_function]))
         return AstExtractFunctionResult(file=request.file, function_name=request.name, line=definition_line)
 
 

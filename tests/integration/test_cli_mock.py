@@ -19,7 +19,6 @@ import sys
 from pathlib import Path
 
 import pytest
-
 from support.mock_llm import MockLLM, scenario, tool_call, tool_turn
 
 from limpiador.cli import main
@@ -105,6 +104,7 @@ def test_make_dev_mock_works_as_a_standalone_process(tmp_path) -> None:
         capture_output=True,
         text=True,
         timeout=60,
+        check=False,
     )
 
     assert proc.returncode == 0, f"stdout={proc.stdout!r} stderr={proc.stderr!r}"

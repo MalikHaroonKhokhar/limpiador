@@ -1,5 +1,9 @@
 # limpiador 🧹
 
+[![CI](https://github.com/MalikHaroonKhokhar/limpiador/actions/workflows/ci.yml/badge.svg)](https://github.com/MalikHaroonKhokhar/limpiador/actions/workflows/ci.yml)
+[![Python](https://img.shields.io/badge/python-3.11%20%7C%203.13-blue)](pyproject.toml)
+[![Checks](https://img.shields.io/badge/checks-ruff%20%C2%B7%20mypy%20%C2%B7%20pytest-informational)](.github/workflows/ci.yml)
+
 An autonomous **git maintenance agent**. Point it at a repository, give it a
 task in plain language — _"fix the failing test in the billing module"_,
 _"rename `calculate_total` everywhere and don't break anything"_, _"triage issue
@@ -17,9 +21,23 @@ The runtime model is **OpenAI** (function calling). The interface is a **CLI**.
 
 ```bash
 make setup        # create venv, install ".[dev]", copy .env.example -> .env
+make check        # what CI runs: lint + typecheck + the free suite
 make test         # default suite: unit + mock-integration (mock model, free, no network)
 make help         # full command reference
 ```
+
+## CI
+
+Every push and pull request runs [`.github/workflows/ci.yml`](.github/workflows/ci.yml)
+on Python 3.11 and 3.13: **install → lint (ruff) → typecheck (mypy) → the free
+suite**, then uploads the coverage report as a build artifact.
+
+It requires **no secrets**. The whole workflow runs in mock mode — a
+deterministic stub model, temp git fixtures, no provider calls — so a fork PR
+gets the same green tick as a maintainer push. The tiers that cost credits (the
+`e2e` tests, the reproduction tier, and `make eval`) are deliberately excluded
+and stay manual; `-m "not e2e"` deselects them by marker rather than by hoping
+they are skipped.
 
 Then edit `.env` with your `OPENAI_API_KEY` (and, for E2E, `GITHUB_TOKEN` +
 `LIMPIADOR_SANDBOX_REPO`) before running anything in real mode.

@@ -124,7 +124,7 @@ class TestResult(Schema):
     duration_seconds: float | None = Field(default=None, ge=0)
 
     @model_validator(mode="after")
-    def validate_failure_consistency(self) -> "TestResult":
+    def validate_failure_consistency(self) -> TestResult:
         """Keep the failed count and the structured failure list in agreement.
 
         The fix loop reads ``failures`` to locate causes (ARCHITECTURE.md §8), so

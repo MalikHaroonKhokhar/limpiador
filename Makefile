@@ -1,4 +1,4 @@
-.PHONY: help test test-unit test-integration test-e2e test-reproduce eval \
+.PHONY: help lint typecheck check test test-unit test-integration test-e2e test-reproduce eval \
         test-all test-coverage test-coverage-report test-fast test-failed \
         test-specific test-e2e-check run run-sandbox dev-mock demo clean install setup verify
 
@@ -49,6 +49,11 @@ help:
 	@echo "                           (mock model, no network, free, CI-safe)"
 	@echo "  make test-all          - Full pyramid incl. real-mode E2E + evals (costs \$$)"
 	@echo ""
+	@echo "🔍 Static checks (free, deterministic — the CI gates):"
+	@echo "  make lint              - Lint with ruff (rules in pyproject.toml)"
+	@echo "  make typecheck         - Typecheck with mypy"
+	@echo "  make check             - lint + typecheck + the free suite (what CI runs)"
+	@echo ""
 	@echo "🧪 Test Pyramid (cheapest → most expensive):"
 	@echo "  make test-unit         - Layer 1: pure logic, mock model, no network (<1s)"
 	@echo "  make test-integration  - Layer 2: full loop on mock model, temp git repos"
@@ -88,6 +93,25 @@ help:
 	@echo "  • CLEAN_CODE.md    - code-style contract"
 	@echo "  • MEMO.md          - the one-page brief deliverable"
 	@echo ""
+
+# ============================================================================
+# Static checks (free, deterministic, CI-safe) — the gates CI runs before tests
+# ============================================================================
+# The rule sets live in pyproject.toml, so CI and a developer's terminal run the
+# byte-identical check. Formatting is deliberately not a gate (see pyproject).
+lint:
+	@echo "🔍 Lint (ruff)..."
+	@$(PYTHON) -m ruff check src tests evals
+	@echo "✅ Lint clean."
+
+typecheck:
+	@echo "🔎 Typecheck (mypy)..."
+	@$(PYTHON) -m mypy
+	@echo "✅ Typecheck clean."
+
+check: lint typecheck test
+	@echo ""
+	@echo "✅ All checks passed (lint + typecheck + free suite)."
 
 # ============================================================================
 # Test Pyramid — Layer 1 & 2 (MOCK mode: free, deterministic, CI-safe)
@@ -191,9 +215,9 @@ test-all:
 test-coverage:
 	@echo "📊 Running mock-mode suite with coverage..."
 	@$(MOCK_ENV) $(PYTEST) tests/unit/ tests/integration/ -m "not e2e" \
-		--cov=src/limpiador --cov-report=html --cov-report=term
+		--cov=src/limpiador --cov-report=html --cov-report=xml --cov-report=term
 	@echo ""
-	@echo "📊 Coverage report generated: htmlcov/index.html"
+	@echo "📊 Coverage report generated: htmlcov/index.html (+ coverage.xml for CI)"
 
 test-coverage-report:
 	@echo "📊 Opening coverage report..."

@@ -21,9 +21,9 @@ noticed on call 4 still be available on call 22 without re-reading the file.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field, replace
+from collections.abc import Callable
+from dataclasses import dataclass, replace
 from enum import Enum
-from typing import Callable
 
 from limpiador.observability.tracing import COMPACTION_TAG, CONTEXT_REREAD_TAG, emit
 

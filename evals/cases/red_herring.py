@@ -20,9 +20,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from limpiador.observability.tracing import Tracer
-
 from evals.cases._base import EvalCase, file_changed, file_unchanged, run_tests
+from limpiador.observability.tracing import Tracer
 
 _FIXTURE = "red_herring"
 _TASK = (

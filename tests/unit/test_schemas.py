@@ -12,7 +12,6 @@ import pytest
 from pydantic import ValidationError
 
 from limpiador import schemas as S
-from limpiador.tools.base import NAMESPACES
 from limpiador.schemas import (
     Finding,
     FindReferencesRequest,
@@ -28,6 +27,7 @@ from limpiador.schemas import (
     ToolCall,
     Verdict,
 )
+from limpiador.tools.base import NAMESPACES
 
 # One representative instance of every contract, including the empty/default
 # variants. The round-trip tests run over all of them.

@@ -19,9 +19,8 @@ all four isolation axes against the deterministic mock model:
 
 from __future__ import annotations
 
-from support.mock_llm import MockLLM, scenario, tool_call, tool_turn
-
 import pytest
+from support.mock_llm import MockLLM, scenario, tool_call, tool_turn
 
 from limpiador.agent.guard import CallGuard
 from limpiador.observability.errors import NotFoundError

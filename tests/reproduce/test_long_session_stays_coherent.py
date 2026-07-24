@@ -22,7 +22,7 @@ A captured run of this session lives in ``traces/har-33/``.
 from __future__ import annotations
 
 import os
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
@@ -151,7 +151,7 @@ def _capture(result, sources: dict[str, str]) -> None:
     lines = [
         "# HAR-33 — a captured 20+ call session that kept its plan",
         "",
-        f"Captured {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC')} "
+        f"Captured {datetime.now(UTC).strftime('%Y-%m-%d %H:%M UTC')} "
         "by `tests/reproduce/test_long_session_stays_coherent.py` (real model).",
         "",
         "## Outcome",
