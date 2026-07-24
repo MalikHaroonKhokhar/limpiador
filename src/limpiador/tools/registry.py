@@ -3,9 +3,11 @@
 The registry holds all fifty-seven tools registered at import time, tracks which
 are currently loaded into context, and exposes only ``core + loaded`` schemas to
 the LLM adapter each turn. The model always sees a small fixed core —
-``search_tools(query)``, ``load_tool(name)``, ``finish(result)`` — and discovers
-everything else, which is what *proves* model-driven selection: the model cannot
-fall back on a tool it was handed because it was handed almost nothing.
+``search_tools(query)``, ``load_tool(name)``, the plan verbs ``plan_add`` /
+``plan_resolve``, and ``finish(result)`` — and discovers everything else, which is
+what *proves* model-driven selection: the model cannot fall back on a tool it was
+handed because it was handed almost nothing. None of the core acts on the repo:
+they act on the registry, or on the run's own plan.
 
 Search ranking is a local, deterministic operation over tool names and
 descriptions — no model call, no cost. The current keyword-overlap strategy and
@@ -37,6 +39,9 @@ from limpiador.schemas import (
     FinishResult,
     LoadToolRequest,
     LoadToolResult,
+    PlanAddRequest,
+    PlanResolveRequest,
+    PlanResult,
     Schema,
     SearchToolsRequest,
     SearchToolsResult,
@@ -44,13 +49,19 @@ from limpiador.schemas import (
 )
 from limpiador.tools.base import Tool, openai_function_schema
 
-# The fixed core the model always sees (ARCHITECTURE.md §5.2). These three names
-# are not in any namespace — they operate on the registry itself, not the repo —
-# so they live here rather than as namespaced Tool subclasses.
+# The fixed core the model always sees (ARCHITECTURE.md §5.2). These names are
+# not in any namespace — they operate on the registry or the run itself, not the
+# repo — so they live here rather than as namespaced Tool subclasses.
 SEARCH_TOOLS = "search_tools"
 LOAD_TOOL = "load_tool"
 FINISH = "finish"
-CORE_TOOL_NAMES: tuple[str, ...] = (SEARCH_TOOLS, LOAD_TOOL, FINISH)
+# The plan protocol verbs (property #3). Like ``finish``, these do not act on the
+# repo — they act on the *run*, recording the agent's plan in durable working
+# memory so it survives compaction. The registry validates and echoes them; the
+# loop applies their meaning to the Context, exactly as it does for ``finish``.
+PLAN_ADD = "plan_add"
+PLAN_RESOLVE = "plan_resolve"
+CORE_TOOL_NAMES: tuple[str, ...] = (SEARCH_TOOLS, LOAD_TOOL, PLAN_ADD, PLAN_RESOLVE, FINISH)
 
 # Ranking weights: a hit in the tool's *name* is a stronger capability signal
 # than a hit in its prose description, so name overlap is weighted more heavily.
@@ -87,6 +98,21 @@ _CORE_TOOLS: tuple[_CoreTool, ...] = (
         LoadToolRequest,
     ),
     _CoreTool(
+        PLAN_ADD,
+        "Commit to a plan: record the sub-goals you intend to work through, in "
+        "order. Call this once, early, before you start investigating. The plan "
+        "is durable — it survives context compaction, so you will not lose it on "
+        "a long task.",
+        PlanAddRequest,
+    ),
+    _CoreTool(
+        PLAN_RESOLVE,
+        "Mark one planned sub-goal complete. Resolved sub-goals are durable and "
+        "must never be re-opened or redone — consult the plan instead of redoing "
+        "finished work.",
+        PlanResolveRequest,
+    ),
+    _CoreTool(
         FINISH,
         "Finish the task and return the final structured result. Call this once "
         "the objective is complete.",
@@ -108,7 +134,7 @@ def _tokenize(text: str) -> set[str]:
 class ToolRegistry:
     """Holds every tool, tracks which are loaded, and serves the active schemas.
 
-    The model interacts with the registry only through the three core meta-tools
+    The model interacts with the registry only through the core meta-tools
     (:meth:`search`, :meth:`load`, :meth:`finish`); :meth:`active_schemas` is what
     the loop hands the adapter each turn. Construction takes an optional ``tracer``
     so a test can assert on debt-tag emissions without touching global logging.
@@ -169,6 +195,18 @@ class ToolRegistry:
         self._last_was_search = False
         return LoadToolResult(name=req.name, loaded=True)
 
+    def plan_add(self, request: PlanAddRequest | dict[str, object]) -> PlanResult:
+        """Acknowledge a declared plan; the loop commits it to durable memory."""
+        req = self._coerce(PlanAddRequest, request)
+        self._last_was_search = False
+        return PlanResult(sub_goals=list(req.sub_goals))
+
+    def plan_resolve(self, request: PlanResolveRequest | dict[str, object]) -> PlanResult:
+        """Acknowledge a completed sub-goal; the loop marks it resolved durably."""
+        req = self._coerce(PlanResolveRequest, request)
+        self._last_was_search = False
+        return PlanResult(resolved=[req.sub_goal])
+
     def finish(self, request: FinishRequest | dict[str, object]) -> FinishResult:
         """Terminate the task with a structured result (the loop stops on this)."""
         req = self._coerce(FinishRequest, request)
@@ -179,7 +217,7 @@ class ToolRegistry:
     def dispatch(self, name: str, arguments: dict[str, object] | Schema) -> Schema:
         """Route a tool call (by its OpenAI-safe name) to a handler and invoke it.
 
-        The three core meta-tools are dispatched by their fixed protocol names;
+        The core meta-tools are dispatched by their fixed protocol names;
         every other call routes to a *loaded* namespaced tool by its OpenAI-safe
         name. This is the registry's single seam for the loop: the loop hands over
         a name and arguments and never has to know which concrete tool runs. A
@@ -191,6 +229,10 @@ class ToolRegistry:
             return self.search(arguments)
         if name == LOAD_TOOL:
             return self.load(arguments)
+        if name == PLAN_ADD:
+            return self.plan_add(arguments)
+        if name == PLAN_RESOLVE:
+            return self.plan_resolve(arguments)
         if name == FINISH:
             return self.finish(arguments)
         return self._loaded_tool(name).invoke(arguments)

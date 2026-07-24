@@ -29,6 +29,8 @@ from limpiador.tools.registry import (
     CORE_TOOL_NAMES,
     FINISH,
     LOAD_TOOL,
+    PLAN_ADD,
+    PLAN_RESOLVE,
     REGISTRY,
     SEARCH_TOOLS,
     ToolRegistry,
@@ -146,7 +148,15 @@ def _active_names(registry: ToolRegistry) -> list[str]:
 def test_core_tools_are_always_present_on_an_empty_registry() -> None:
     registry = ToolRegistry()
     names = _active_names(registry)
-    assert set(CORE_TOOL_NAMES) == {SEARCH_TOOLS, LOAD_TOOL, FINISH}
+    # The fixed protocol surface: discover/load, the two plan verbs (property #3),
+    # and the terminal verb. These act on the registry or the run, never the repo.
+    assert set(CORE_TOOL_NAMES) == {
+        SEARCH_TOOLS,
+        LOAD_TOOL,
+        PLAN_ADD,
+        PLAN_RESOLVE,
+        FINISH,
+    }
     for core in CORE_TOOL_NAMES:
         assert core in names
 
@@ -318,6 +328,34 @@ def test_finish_returns_the_structured_result() -> None:
     registry = ToolRegistry()
     result = registry.finish({"result": "renamed calculate_total in 7 files; tests green"})
     assert result.result == "renamed calculate_total in 7 files; tests green"
+
+
+# ---- the plan protocol verbs (property #3) ----------------------------------
+def test_plan_add_echoes_the_declared_sub_goals() -> None:
+    registry = ToolRegistry()
+    result = registry.dispatch(PLAN_ADD, {"sub_goals": ["map call sites", "edit them"]})
+    assert result.sub_goals == ["map call sites", "edit them"]
+
+
+def test_plan_resolve_echoes_the_completed_sub_goal() -> None:
+    registry = ToolRegistry()
+    result = registry.dispatch(PLAN_RESOLVE, {"sub_goal": "map call sites"})
+    assert result.resolved == ["map call sites"]
+
+
+def test_plan_verbs_reject_malformed_input() -> None:
+    registry = ToolRegistry()
+    with pytest.raises(MalformedInputError):
+        registry.plan_add({"sub_goals": []})  # a plan must have at least one step
+    with pytest.raises(MalformedInputError):
+        registry.plan_resolve({"wrong_key": "x"})
+
+
+def test_plan_verbs_are_dispatchable_without_being_loaded() -> None:
+    """They are protocol, not repo-acting tools — always available, never loaded."""
+    registry = ToolRegistry()
+    assert registry.loaded_names() == ()
+    assert registry.dispatch(PLAN_ADD, {"sub_goals": ["a"]}).sub_goals == ["a"]
 
 
 # ---- the ARCH_DEBT_001 research-retry trace tag -----------------------------

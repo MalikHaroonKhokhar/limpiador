@@ -39,6 +39,12 @@ CONTEXT_REREAD_TAG = "[CONTEXT REREAD]"
 # went to the cheap model and that the cached head stayed stable across turns.
 ROUTING_TAG = "[ROUTING]"
 
+# ``[CONTEXT COMPACTION]`` is an observability tag: every pass that actually
+# evicted records how many payloads it dropped and the footprint before/after.
+# It is what makes property #3 *visible in a run's trace* — a long session can be
+# shown to have compacted mid-flight rather than merely claiming a flat footprint.
+COMPACTION_TAG = "[CONTEXT COMPACTION]"
+
 
 def emit(tag: str, message: str = "") -> None:
     """Record a tagged trace event so its frequency can be counted later.

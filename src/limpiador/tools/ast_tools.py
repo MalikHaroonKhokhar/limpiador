@@ -504,6 +504,17 @@ class AstRenameSymbol(Tool):
         for file, references in by_file.items():
             lines = _resolve(file).read_text().split("\n")
             for reference in sorted(references, key=lambda r: (r.line, r.column or 0), reverse=True):
+                # A reference can be stale (the file changed since it was resolved)
+                # or synthesised by the model. Indexing blindly would raise
+                # IndexError — not a ToolError, so it would escape the loop's
+                # folding and kill the whole run. Fail recoverably instead, so the
+                # model can re-resolve and try again.
+                if not 1 <= reference.line <= len(lines):
+                    raise MalformedInputError(
+                        f"{file}:{reference.line} is outside the file "
+                        f"(1-{len(lines)}); re-resolve the references with "
+                        "ast.find_references before renaming."
+                    )
                 lines[reference.line - 1] = _replace_at(
                     lines[reference.line - 1], reference.column or 0, old, request.new_name
                 )

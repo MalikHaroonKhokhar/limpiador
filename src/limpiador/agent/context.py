@@ -25,7 +25,7 @@ from dataclasses import dataclass, field, replace
 from enum import Enum
 from typing import Callable
 
-from limpiador.observability.tracing import CONTEXT_REREAD_TAG, emit
+from limpiador.observability.tracing import COMPACTION_TAG, CONTEXT_REREAD_TAG, emit
 
 # Named configuration (CLEAN_CODE.md §7), not magic numbers in the loop. The
 # threshold is the footprint at which compaction triggers; the chars-per-token
@@ -277,6 +277,10 @@ class Context:
             evicted += 1
 
         after = self.estimated_tokens()
+        # Property #3 is only credible if it is observable: record what this pass
+        # actually dropped so a long run's trace *shows* compaction firing.
+        if evicted:
+            self._trace(COMPACTION_TAG, f"evicted {evicted} payload(s): {before} -> {after} tokens")
         return CompactionResult(evicted, before, after)
 
     # ---- internals ----------------------------------------------------------

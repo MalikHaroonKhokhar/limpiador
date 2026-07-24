@@ -21,7 +21,7 @@ import pathlib
 
 import pytest
 
-from limpiador.observability.errors import NotFoundError
+from limpiador.observability.errors import MalformedInputError, NotFoundError
 from limpiador.schemas import (
     AstCallGraph,
     AstComplexityResult,
@@ -34,6 +34,7 @@ from limpiador.schemas import (
     AstParseResult,
     AstRenameResult,
     AstSymbolList,
+    Reference,
     RefList,
     RenameSymbolRequest,
 )
@@ -215,6 +216,22 @@ def test_find_references_output_validates_and_feeds_rename(project) -> None:
     assert "def compute(" not in text
     assert "# compute the total" in text
     assert 'label = "compute"' in text
+
+
+def test_rename_rejects_a_reference_line_past_the_end_of_the_file(project) -> None:
+    """A stale or hand-built reference must fail *recoverably*, not crash the run.
+
+    The agent can hand over a RefList whose line numbers no longer match the file
+    (it edited in between, or synthesised the list itself). Indexing blindly threw
+    IndexError, which is not a ToolError — so it escaped the loop's folding and
+    killed the whole session instead of letting the model adapt.
+    """
+    refs = RefList(
+        symbol="compute",
+        references=[Reference(file="pkg/core.py", line=9999, symbol="compute")],
+    )
+    with pytest.raises(MalformedInputError):
+        _tool("ast.rename_symbol").invoke(RenameSymbolRequest(references=refs, new_name="calculate"))
 
 
 def test_rename_changes_no_sites_outside_the_reference_list(project) -> None:

@@ -914,6 +914,31 @@ class LoadToolResult(Schema):
     loaded: bool = True
 
 
+class PlanAddRequest(Schema):
+    """Input to the core ``plan_add`` protocol verb: the sub-goals to commit to."""
+
+    sub_goals: list[str] = Field(
+        min_length=1, description="The planned steps, in the order they will be worked."
+    )
+
+
+class PlanResolveRequest(Schema):
+    """Input to the core ``plan_resolve`` protocol verb: the step now complete."""
+
+    sub_goal: str = Field(min_length=1, description="The sub-goal that is now done.")
+
+
+class PlanResult(Schema):
+    """The plan's state after a ``plan_add`` / ``plan_resolve`` call.
+
+    Returned so the model sees its own durable plan echoed back — the plan lives
+    in the run's working memory (never evicted), not in the transcript.
+    """
+
+    sub_goals: list[str] = Field(default_factory=list)
+    resolved: list[str] = Field(default_factory=list)
+
+
 class FinishRequest(Schema):
     """Input to the core ``finish`` meta-tool: the task's final structured result."""
 

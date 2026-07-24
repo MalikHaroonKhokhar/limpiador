@@ -28,7 +28,7 @@ from limpiador.agent.context import (
     SymbolKind,
     estimate_tokens,
 )
-from limpiador.observability.tracing import CONTEXT_REREAD_TAG
+from limpiador.observability.tracing import COMPACTION_TAG, CONTEXT_REREAD_TAG
 
 
 def _big(label: str, *, tokens: int = 200) -> str:
@@ -179,6 +179,29 @@ def test_rereading_a_file_emits_the_context_reread_tag() -> None:
     ctx.record_payload("billing.py", _big("second"))
 
     assert (CONTEXT_REREAD_TAG, "billing.py") in events
+
+
+# ---- compaction is observable in the trace (HAR-33) -------------------------
+def test_a_compaction_that_evicts_emits_the_compaction_tag() -> None:
+    events, trace = _recording_tracer()
+    ctx = Context("long investigation", threshold_tokens=200, tracer=trace)
+    for i in range(5):
+        ctx.record_payload(f"file{i}.py", _big(f"contents {i}"))
+
+    result = ctx.compact()
+
+    assert result.evicted >= 1
+    tags = [tag for tag, _ in events]
+    assert COMPACTION_TAG in tags, "an eviction must be visible in the trace"
+
+
+def test_a_noop_compaction_stays_silent() -> None:
+    events, trace = _recording_tracer()
+    ctx = Context("short task", threshold_tokens=DEFAULT_COMPACTION_THRESHOLD_TOKENS, tracer=trace)
+    ctx.record_payload("small.py", "tiny")
+
+    assert ctx.compact().evicted == 0
+    assert [tag for tag, _ in events if tag == COMPACTION_TAG] == []
 
 
 def test_a_non_file_payload_does_not_count_as_a_reread() -> None:
