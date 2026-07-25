@@ -141,6 +141,43 @@ def test_unknown_field_is_rejected() -> None:
         Reference(file="a.py", line=1, symbol="x", bogus=True)
 
 
+# ---- severity: a reviewing model's natural words normalize onto the enum ------
+@pytest.mark.parametrize(
+    ("word", "expected"),
+    [
+        ("error", Severity.ERROR),  # the canonical spellings still pass through
+        ("warning", Severity.WARNING),
+        ("info", Severity.INFO),
+        ("high", Severity.ERROR),  # the words a model actually emits (captured trace)
+        ("critical", Severity.ERROR),
+        ("blocker", Severity.ERROR),
+        ("major", Severity.ERROR),
+        ("medium", Severity.WARNING),
+        ("moderate", Severity.WARNING),
+        ("low", Severity.INFO),
+        ("minor", Severity.INFO),
+        ("nit", Severity.INFO),
+        ("HIGH", Severity.ERROR),  # case-insensitive
+        ("  Medium ", Severity.WARNING),  # whitespace-tolerant
+    ],
+)
+def test_finding_normalizes_natural_severity_words(word: str, expected: Severity) -> None:
+    """A reviewing model writes 'high'/'medium'/'low', not the enum's exact
+    'error'/'warning'/'info'. A real captured run had github.review_pr rejected with
+    MalformedInputError on exactly that — a finding whose severity was 'high'. The
+    Finding contract normalizes the common synonyms onto the canonical three so a
+    faithful review is not thrown away over a spelling."""
+    assert Finding(severity=word, file="a.py", line=1, message="x").severity is expected
+
+
+def test_finding_still_rejects_a_meaningless_severity() -> None:
+    """Normalization widens the accepted spellings; it does not turn severity into a
+    free string. An unmappable value is still a typed error the loop can read and
+    the model can correct — the strict boundary is preserved."""
+    with pytest.raises(ValidationError):
+        Finding(severity="spicy", file="a.py", line=1, message="x")
+
+
 def test_optional_fields_default_rather_than_require() -> None:
     """Genuinely optional fields default; they are not required boundaries."""
     assert RefList(symbol="x").references == []

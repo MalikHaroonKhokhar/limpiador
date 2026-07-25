@@ -283,6 +283,48 @@ def test_review_pr_submits_and_returns_submission() -> None:
     assert captured["event"] == "APPROVE"
 
 
+def test_review_pr_accepts_the_natural_severity_words_a_model_emits() -> None:
+    """Replays a real captured failure: a review call died with MalformedInputError
+    because a finding's severity was 'high'/'medium' — words the Severity enum did
+    not accept — so the whole github.review_pr call was thrown away. The raw payload
+    a reviewing model emits must now validate and submit the changes-request."""
+    captured: dict[str, object] = {}
+
+    def create_review(**kwargs: object):
+        captured.update(kwargs)
+        return _ns(id=11)
+
+    pull = _pull()
+    pull.create_review = create_review
+    repo = _happy_repo()
+    repo.get_pull = _returns(pull)
+    tools, *_ = _bind(repo=repo)
+
+    raw_review = {
+        "number": 1,
+        "review": {
+            "verdict": "request_changes",
+            "findings": [
+                {
+                    "severity": "high",
+                    "file": "utils.py",
+                    "line": 4,
+                    "message": "mutable default argument",
+                    "suggestion": "use None and initialize inside the function",
+                },
+                {"severity": "medium", "file": "net.py", "line": 9, "message": "unreachable code"},
+            ],
+            "summary": "two issues to address",
+        },
+    }
+
+    result = tools["github.review_pr"].invoke(raw_review)
+
+    assert isinstance(result, GithubReviewSubmission)
+    assert result.submitted is True
+    assert captured["event"] == "REQUEST_CHANGES"
+
+
 def test_request_changes_submits_a_request_changes_review() -> None:
     captured: dict[str, object] = {}
 
@@ -299,6 +341,84 @@ def test_request_changes_submits_a_request_changes_review() -> None:
     result = tools["github.request_changes"].invoke({"number": 1, "body": "please fix"})
     assert isinstance(result, GithubReviewSubmission)
     assert captured["event"] == "REQUEST_CHANGES"
+
+
+def _own_pr_review(events: list[str]):
+    """A create_review that mimics GitHub: it 422s on approve/request-changes for
+    your own PR (recording the attempt) but accepts a COMMENT review."""
+
+    def create_review(**kwargs: object):
+        event = str(kwargs["event"])
+        events.append(event)
+        if event in ("REQUEST_CHANGES", "APPROVE"):
+            raise GithubException(
+                422,
+                {
+                    "message": "Unprocessable Entity",
+                    "errors": ["Review Can not request changes on your own pull request"],
+                },
+                None,
+            )
+        return _ns(id=77)
+
+    return create_review
+
+
+def test_request_changes_on_your_own_pr_degrades_to_a_comment_review() -> None:
+    """GitHub forbids requesting changes on your own PR, but the findings still
+    matter and a COMMENT review is the one reviewing action it allows. The tool
+    posts them as a comment instead of losing the review to the rule, and says so."""
+    events: list[str] = []
+    pull = _pull()
+    pull.create_review = _own_pr_review(events)
+    repo = _happy_repo()
+    repo.get_pull = _returns(pull)
+    tools, *_ = _bind(repo=repo)
+
+    result = tools["github.request_changes"].invoke({"number": 13, "body": "mutable default arg"})
+
+    assert isinstance(result, GithubReviewSubmission)
+    assert result.submitted is True
+    assert result.downgraded_to == "comment"
+    assert "own pull request" in (result.note or "").lower()
+    assert events == ["REQUEST_CHANGES", "COMMENT"]  # tried the rule, then degraded
+
+
+def test_review_pr_approve_on_your_own_pr_degrades_to_a_comment_review() -> None:
+    """The same rule blocks approving your own PR; review_pr degrades identically."""
+    events: list[str] = []
+    pull = _pull()
+    pull.create_review = _own_pr_review(events)
+    repo = _happy_repo()
+    repo.get_pull = _returns(pull)
+    tools, *_ = _bind(repo=repo)
+
+    review = ReviewResult(verdict=Verdict.APPROVE, summary="LGTM")
+    result = tools["github.review_pr"].invoke({"number": 13, "review": review.model_dump()})
+
+    assert result.downgraded_to == "comment"
+    assert events == ["APPROVE", "COMMENT"]
+
+
+def test_a_generic_422_still_raises_rather_than_degrading() -> None:
+    """The degrade is specific to the own-PR rule. A different 422 (a genuinely
+    unprocessable request) must still surface as a typed error, not be silently
+    turned into a comment."""
+    events: list[str] = []
+
+    def create_review(**kwargs: object):
+        events.append(str(kwargs["event"]))
+        raise GithubException(422, {"message": "Validation Failed"}, None)
+
+    pull = _pull()
+    pull.create_review = create_review
+    repo = _happy_repo()
+    repo.get_pull = _returns(pull)
+    tools, *_ = _bind(repo=repo)
+
+    with pytest.raises(ToolError):
+        tools["github.request_changes"].invoke({"number": 1, "body": "please fix"})
+    assert events == ["REQUEST_CHANGES"]  # no COMMENT fallback for an unrelated 422
 
 
 def test_merge_pr_returns_typed_merge_result() -> None:
@@ -419,6 +539,33 @@ def test_create_pr_422_tells_the_agent_to_push_a_branch_with_a_commit() -> None:
     assert "feature" in message  # it names the head branch that is not ready
     assert "push" in message  # and tells the agent how to recover
     assert "commit" in message
+
+
+def test_a_422_review_on_your_own_pr_surfaces_githubs_actual_reason() -> None:
+    """GitHub forbids requesting changes on your own PR and answers 422 with the
+    reason in ``errors[]`` (a real captured run: 'Review Can not request changes on
+    your own pull request'). The folded error must carry that reason, not just the
+    bare top-level 'Unprocessable Entity' — otherwise the agent cannot tell a rule
+    violation from a malformed body, decides its *format* was wrong, and gives up."""
+    repo = _happy_repo()
+    pull = _pull()
+    pull.create_review = _raises(
+        GithubException(
+            422,
+            {
+                "message": "Unprocessable Entity",
+                "errors": ["Review Can not request changes on your own pull request"],
+            },
+            None,
+        )
+    )
+    repo.get_pull = _returns(pull)
+    tools, *_ = _bind(repo=repo)
+
+    with pytest.raises(ToolError) as caught:
+        tools["github.request_changes"].invoke({"number": 13, "body": "please fix"})
+
+    assert "own pull request" in str(caught.value).lower()
 
 
 def test_every_mapped_failure_is_a_recoverable_tool_error() -> None:

@@ -20,7 +20,7 @@ from __future__ import annotations
 from enum import Enum
 from typing import Any
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 
 class Schema(BaseModel):
@@ -44,6 +44,38 @@ class Severity(str, Enum):
     INFO = "info"
     WARNING = "warning"
     ERROR = "error"
+
+
+# The three canonical severities are all any downstream consumer switches on, but a
+# reviewing model reaches for the everyday vocabulary — "high", "critical", "low",
+# "nit" — far more readily than the enum's exact spellings. A real captured run had
+# a whole github.review_pr call rejected (MalformedInputError) because one finding's
+# severity was "high". These synonyms are folded onto the canonical three at the
+# boundary (see Finding) so a faithful review is never thrown away over a word
+# choice; a value that maps to nothing is still a typed error the model can correct.
+_SEVERITY_SYNONYMS: dict[str, Severity] = {
+    "critical": Severity.ERROR,
+    "blocker": Severity.ERROR,
+    "blocking": Severity.ERROR,
+    "high": Severity.ERROR,
+    "major": Severity.ERROR,
+    "severe": Severity.ERROR,
+    "fatal": Severity.ERROR,
+    "medium": Severity.WARNING,
+    "moderate": Severity.WARNING,
+    "warn": Severity.WARNING,
+    "caution": Severity.WARNING,
+    "low": Severity.INFO,
+    "minor": Severity.INFO,
+    "note": Severity.INFO,
+    "nit": Severity.INFO,
+    "nitpick": Severity.INFO,
+    "trivial": Severity.INFO,
+    "style": Severity.INFO,
+    "suggestion": Severity.INFO,
+    "informational": Severity.INFO,
+    "fyi": Severity.INFO,
+}
 
 
 class Verdict(str, Enum):
@@ -155,6 +187,21 @@ class Finding(Schema):
     line: int | None = Field(default=None, ge=1)
     message: str = Field(min_length=1)
     suggestion: str | None = Field(default=None, description="A concrete suggested change.")
+
+    @field_validator("severity", mode="before")
+    @classmethod
+    def _normalize_severity(cls, value: object) -> object:
+        """Fold a model's everyday severity word onto the canonical enum.
+
+        Runs before enum coercion: a canonical value ("error") and a ``Severity``
+        instance pass straight through; a known synonym ("high") is mapped onto the
+        canonical three; anything else is returned untouched so the enum raises the
+        normal typed error the loop can fold and the model can correct.
+        """
+        if isinstance(value, str):
+            key = value.strip().lower()
+            return _SEVERITY_SYNONYMS.get(key, key)
+        return value
 
 
 class ReviewResult(Schema):
@@ -403,6 +450,12 @@ class CodeMatch(Schema):
 class GithubReviewSubmission(Schema):
     submitted: bool = True
     review_id: int | None = None
+    # Set when the requested review event could not be honored and was posted as a
+    # plain comment instead — GitHub forbids approving or requesting changes on your
+    # own pull request. ``note`` explains why, so the agent reports what it actually
+    # did rather than claiming a changes-request it was not allowed to make.
+    downgraded_to: str | None = None
+    note: str | None = None
 
 
 class GithubGetIssueRequest(Schema):
