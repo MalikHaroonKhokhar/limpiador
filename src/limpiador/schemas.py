@@ -450,6 +450,12 @@ class CodeMatch(Schema):
 class GithubReviewSubmission(Schema):
     submitted: bool = True
     review_id: int | None = None
+    # Set when the requested review event could not be honored and was posted as a
+    # plain comment instead — GitHub forbids approving or requesting changes on your
+    # own pull request. ``note`` explains why, so the agent reports what it actually
+    # did rather than claiming a changes-request it was not allowed to make.
+    downgraded_to: str | None = None
+    note: str | None = None
 
 
 class GithubGetIssueRequest(Schema):

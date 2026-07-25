@@ -172,10 +172,52 @@ def _classify(error: GithubException) -> ToolError:
 
 
 def _message(error: GithubException) -> str:
+    """The human-readable reason from a GitHub error, richest detail first.
+
+    GitHub returns a terse top-level ``message`` ("Unprocessable Entity") and puts
+    the *actual* reason(s) in an ``errors`` array — sometimes plain strings,
+    sometimes ``{"message": ...}`` objects. This once returned only the top-level
+    message, so a 422 like "can not request changes on your own pull request"
+    reached the agent as a bare "Unprocessable Entity": it could not tell a rule
+    violation from a malformed body, so it concluded its *format* was wrong and gave
+    up. Folding ``errors[]`` in makes the reason actionable.
+    """
     data = error.data
-    if isinstance(data, dict) and "message" in data:
-        return str(data["message"])
-    return str(error)
+    if not isinstance(data, dict):
+        return str(error)
+    headline = str(data.get("message", "")).strip()
+    detail = _errors_detail(data.get("errors"))
+    if headline and detail:
+        return f"{headline} — {detail}"
+    return headline or detail or str(error)
+
+
+def _errors_detail(errors: object) -> str:
+    """Flatten a GitHub ``errors`` array into one readable clause."""
+    if not isinstance(errors, list):
+        return ""
+    parts: list[str] = []
+    for item in errors:
+        if isinstance(item, str):
+            parts.append(item)
+        elif isinstance(item, dict):
+            text = item.get("message") or item.get("code") or ""
+            if text:
+                parts.append(str(text))
+    return "; ".join(parts)
+
+
+# GitHub refuses APPROVE / REQUEST_CHANGES on the author's *own* pull request with a
+# 422 whose reason names it ("... on your own pull request"). A COMMENT review is the
+# one reviewing action it allows there, so the review tools degrade to a comment
+# rather than lose the findings to a rule the input can never satisfy. This detects
+# exactly that case (post the fidelity fix, the reason rides in the error message);
+# any other 422 is left to surface as the malformed-input error it is.
+_OWN_PR_REVIEW_SIGNATURE = "own pull request"
+
+
+def _is_own_pr_review_block(error: ToolError) -> bool:
+    return isinstance(error, MalformedInputError) and _OWN_PR_REVIEW_SIGNATURE in str(error).lower()
 
 
 # ---- shared projections onto the typed schemas ------------------------------
@@ -376,6 +418,42 @@ class GithubCreatePr(_GitHubTool):
         return _to_pull(pull, changed_files=[])
 
 
+def _submit_review(
+    tool: _GitHubTool, number: int, body: str, event: str
+) -> GithubReviewSubmission:
+    """Submit a review, degrading APPROVE/REQUEST_CHANGES to a COMMENT when GitHub
+    refuses it on the author's own pull request.
+
+    The findings still matter, and a comment review is the one reviewing action
+    GitHub allows on your own PR — so the tool posts them there rather than lose the
+    review to a rule the input could never satisfy, and the result records that it
+    downgraded (so the agent reports what it actually did). Every other failure is
+    re-raised untouched.
+    """
+
+    def submit(review_event: str) -> object:
+        return tool._call(
+            lambda: tool._repo().get_pull(number).create_review(body=body, event=review_event)
+        )
+
+    try:
+        review = submit(event)
+        return GithubReviewSubmission(submitted=True, review_id=review.id)
+    except MalformedInputError as blocked:
+        if not _is_own_pr_review_block(blocked):
+            raise
+        review = submit("COMMENT")
+        return GithubReviewSubmission(
+            submitted=True,
+            review_id=review.id,
+            downgraded_to="comment",
+            note=(
+                "GitHub does not allow approving or requesting changes on your own "
+                "pull request; posted the findings as a comment review instead."
+            ),
+        )
+
+
 class GithubReviewPr(_GitHubTool):
     name = "github.review_pr"
     description = (
@@ -388,10 +466,7 @@ class GithubReviewPr(_GitHubTool):
     def run(self, request: GithubReviewPrRequest) -> GithubReviewSubmission:
         event = _REVIEW_EVENTS.get(request.review.verdict, "COMMENT")
         body = request.review.summary or ""
-        review = self._call(
-            lambda: self._repo().get_pull(request.number).create_review(body=body, event=event)
-        )
-        return GithubReviewSubmission(submitted=True, review_id=review.id)
+        return _submit_review(self, request.number, body, event)
 
 
 class GithubRequestChanges(_GitHubTool):
@@ -404,12 +479,7 @@ class GithubRequestChanges(_GitHubTool):
     Output = GithubReviewSubmission
 
     def run(self, request: GithubRequestChangesRequest) -> GithubReviewSubmission:
-        review = self._call(
-            lambda: self._repo()
-            .get_pull(request.number)
-            .create_review(body=request.body, event="REQUEST_CHANGES")
-        )
-        return GithubReviewSubmission(submitted=True, review_id=review.id)
+        return _submit_review(self, request.number, request.body, "REQUEST_CHANGES")
 
 
 class GithubMergePr(_GitHubTool):
