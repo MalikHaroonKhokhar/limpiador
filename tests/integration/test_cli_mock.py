@@ -22,9 +22,23 @@ import pytest
 from support.mock_llm import MockLLM, scenario, tool_call, tool_turn
 
 from limpiador.cli import main
+from limpiador.tools.registry import build_registry
 
 _TESTS_DIR = Path(__file__).resolve().parents[1]  # tests/
 _REPO_ROOT = _TESTS_DIR.parent
+
+
+@pytest.fixture(autouse=True)
+def _isolate_default_registry(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Drive each CLI run against a *fresh copy* of the real default registry.
+
+    A scripted scenario here loads a tool through the live loop, which mutates the
+    registry's loaded set. Left pointing at the shared module-level ``REGISTRY``,
+    that load leaks across tests — and ``test_registry`` asserts the singleton is
+    pristine at import. ``build_registry()`` is the same real default shape, so the
+    plumbing is still exercised end-to-end; it just isn't the shared instance.
+    """
+    monkeypatch.setattr("limpiador.cli.REGISTRY", build_registry())
 
 
 def test_dev_mock_runs_a_scripted_scenario_end_to_end(

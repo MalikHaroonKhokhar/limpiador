@@ -282,19 +282,10 @@ run-sandbox:
 	  git -C "$$work/repo" config user.email "agent@limpiador.local"; \
 	  $(REAL_ENV) GITHUB_REPOSITORY="$$LIMPIADOR_SANDBOX_REPO" \
 	    $(PYTHON) -m limpiador.cli run --repo "$$work/repo" --task "$$TASK" --max-calls $(MAX_CALLS) --model $(MODEL) --trace; \
-	  if printf '%s' "$$TASK" | grep -Eiq 'pull request|(^|[^[:alpha:]])pr([^[:alpha:]]|$$)'; then \
+	  if printf '%s' "$$TASK" | grep -Eiq '(open|create|raise|submit|file|propose)[[:space:]]+(a|the|an|new|another)?[[:space:]]*pull request|(open|create|raise|submit|file|propose)[[:space:]]+(a|an|new|another)[[:space:]]+pr([^[:alpha:]]|$$)'; then \
 	    base=$$(git -C "$$work/repo" symbolic-ref --short refs/remotes/origin/HEAD | sed 's#^origin/##'); \
-	    verified=0; \
-	    for head in $$(git -C "$$work/repo" for-each-ref --format='%(refname:short)' refs/heads); do \
-	      test "$$head" = "$$base" && continue; \
-	      count=$$(gh pr list --repo "$$LIMPIADOR_SANDBOX_REPO" --head "$$head" --base "$$base" --state open --json number --jq length 2>/dev/null || echo 0); \
-	      if test "$$count" -gt 0; then \
-	        echo "   verified open PR for $$head -> $$base"; \
-	        verified=1; \
-	        break; \
-	      fi; \
-	    done; \
-	    test "$$verified" = 1 || (echo "❌ Expected an open PR, but none was found on $$LIMPIADOR_SANDBOX_REPO." && exit 1); \
+	    heads=$$(git -C "$$work/repo" for-each-ref --format='%(refname:short)' refs/heads | grep -vx "$$base" || true); \
+	    GITHUB_REPOSITORY="$$LIMPIADOR_SANDBOX_REPO" $(PYTHON) scripts/verify_open_pr.py "$$base" $$heads || exit 1; \
 	  fi; \
 	  echo "   (agent's checkout left at $$work/repo for inspection — rm -rf when done)"
 

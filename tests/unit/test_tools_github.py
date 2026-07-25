@@ -283,6 +283,48 @@ def test_review_pr_submits_and_returns_submission() -> None:
     assert captured["event"] == "APPROVE"
 
 
+def test_review_pr_accepts_the_natural_severity_words_a_model_emits() -> None:
+    """Replays a real captured failure: a review call died with MalformedInputError
+    because a finding's severity was 'high'/'medium' — words the Severity enum did
+    not accept — so the whole github.review_pr call was thrown away. The raw payload
+    a reviewing model emits must now validate and submit the changes-request."""
+    captured: dict[str, object] = {}
+
+    def create_review(**kwargs: object):
+        captured.update(kwargs)
+        return _ns(id=11)
+
+    pull = _pull()
+    pull.create_review = create_review
+    repo = _happy_repo()
+    repo.get_pull = _returns(pull)
+    tools, *_ = _bind(repo=repo)
+
+    raw_review = {
+        "number": 1,
+        "review": {
+            "verdict": "request_changes",
+            "findings": [
+                {
+                    "severity": "high",
+                    "file": "utils.py",
+                    "line": 4,
+                    "message": "mutable default argument",
+                    "suggestion": "use None and initialize inside the function",
+                },
+                {"severity": "medium", "file": "net.py", "line": 9, "message": "unreachable code"},
+            ],
+            "summary": "two issues to address",
+        },
+    }
+
+    result = tools["github.review_pr"].invoke(raw_review)
+
+    assert isinstance(result, GithubReviewSubmission)
+    assert result.submitted is True
+    assert captured["event"] == "REQUEST_CHANGES"
+
+
 def test_request_changes_submits_a_request_changes_review() -> None:
     captured: dict[str, object] = {}
 
