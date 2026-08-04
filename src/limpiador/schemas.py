@@ -98,6 +98,24 @@ class Reference(Schema):
     column: int | None = Field(default=None, ge=0, description="0-based column, if known.")
 
 
+class UnresolvedMention(Schema):
+    """A place the name appears in a *string literal or comment*, not as a resolved
+    identifier — so the parse tree cannot prove it is (or isn't) a reference.
+
+    These are exactly the sites a static rename cannot see: a reflective
+    ``getattr(obj, "name")``, a string-keyed dispatch table, config that names a
+    function, a docstring. They are reported as candidates to verify by hand and
+    are **never** edited by ``ast.rename_symbol`` — so a "safe" rename cannot
+    silently leave a dynamic call site pointing at the old name.
+    """
+
+    file: str = Field(min_length=1, description="Repo-relative path to the file.")
+    line: int = Field(ge=1, description="1-based line the mention is on.")
+    column: int | None = Field(default=None, ge=0, description="0-based column, if known.")
+    kind: str = Field(description="Where it appears: 'string' or 'comment'.")
+    context: str = Field(description="The source line, for judging if it is a real reference.")
+
+
 class RefList(Schema):
     """The typed output of ``ast.find_references``: every site a symbol is used.
 
@@ -105,10 +123,22 @@ class RefList(Schema):
     renaming without first consuming references is how agents miss call sites
     and break builds. An empty ``references`` list is a valid result (the symbol
     is used nowhere), not an error.
+
+    ``unresolved`` is the dynamic-dispatch safety net: string-literal and comment
+    occurrences of the same name that the AST cannot resolve to a reference. They
+    are candidates to verify, never auto-renamed — the sites a static rename would
+    otherwise miss in silence.
     """
 
     symbol: str = Field(min_length=1, description="The symbol that was searched for.")
     references: list[Reference] = Field(default_factory=list)
+    unresolved: list[UnresolvedMention] = Field(
+        default_factory=list,
+        description=(
+            "String/comment occurrences of the same name the AST cannot resolve to "
+            "a reference — dynamic-dispatch candidates to verify, never auto-renamed."
+        ),
+    )
 
 
 class FindReferencesRequest(Schema):
@@ -787,6 +817,13 @@ class AstRenameResult(Schema):
     new_name: str = Field(min_length=1)
     sites_changed: int = Field(ge=0)
     files_changed: list[str] = Field(default_factory=list)
+    unresolved: list[UnresolvedMention] = Field(
+        default_factory=list,
+        description=(
+            "String/comment sites still naming the old symbol that were NOT edited "
+            "— reflection, string-keyed lookups, config, docs — to verify by hand."
+        ),
+    )
 
 
 class AstExtractFunctionRequest(Schema):

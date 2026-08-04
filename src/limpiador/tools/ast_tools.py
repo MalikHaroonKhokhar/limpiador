@@ -17,6 +17,7 @@ working-tree root, the same way the git and fs tools do.
 
 from __future__ import annotations
 
+import re
 from collections import defaultdict
 from collections.abc import Iterator
 from pathlib import Path
@@ -57,6 +58,7 @@ from limpiador.schemas import (
     RenameSymbolRequest,
     Symbol,
     SymbolComplexity,
+    UnresolvedMention,
 )
 from limpiador.tools.base import Tool
 
@@ -200,6 +202,59 @@ def _identifier_nodes(root: Node, name: str) -> Iterator[Node]:
     for node in _walk(root):
         if node.type == "identifier" and node.text.decode() == name and not _is_attribute_name(node):
             yield node
+
+
+def _word_pattern(name: str) -> re.Pattern[str]:
+    """A whole-word matcher for ``name``, so a mention is a real word occurrence —
+    ``getattr(obj, "compute")`` matches, an unrelated ``"recompute_all"`` does not."""
+    return re.compile(rf"\b{re.escape(name)}\b")
+
+
+def _mentions_from_root(root: Node, rel: str, name: str, lines: list[str]) -> list[UnresolvedMention]:
+    """String-literal and comment sites naming ``name`` in one parsed file.
+
+    Only ``string`` and ``comment`` nodes are inspected — never identifiers — so
+    these are exactly the occurrences a static rename cannot resolve to a
+    reference: reflection, string-keyed dispatch, config, docstrings. Each matching
+    node yields one mention, anchored at the first line within it that matches,
+    with that source line kept as context for the model to judge.
+    """
+    pattern = _word_pattern(name)
+    mentions: list[UnresolvedMention] = []
+    for node in _walk(root):
+        if node.type not in ("string", "comment"):
+            continue
+        text = node.text.decode("utf-8", "replace")
+        if not pattern.search(text):
+            continue
+        kind = "comment" if node.type == "comment" else "string"
+        start_row = node.start_point[0]
+        for offset, node_line in enumerate(text.split("\n")):
+            match = pattern.search(node_line)
+            if match is None:
+                continue
+            row = start_row + offset
+            column = (node.start_point[1] if offset == 0 else 0) + match.start()
+            context = lines[row].strip() if 0 <= row < len(lines) else node_line.strip()
+            mentions.append(
+                UnresolvedMention(file=rel, line=row + 1, column=column, kind=kind, context=context)
+            )
+            break
+    return mentions
+
+
+def _unresolved_mentions(name: str) -> list[UnresolvedMention]:
+    """Every string/comment mention of ``name`` across the repo, sorted stably.
+
+    The standalone scan ``rename_symbol`` uses so its result carries the flagged,
+    un-edited sites regardless of how the RefList it consumed was built."""
+    mentions: list[UnresolvedMention] = []
+    for path in _python_files("."):
+        data = path.read_bytes()
+        lines = data.decode("utf-8", "replace").split("\n")
+        mentions.extend(_mentions_from_root(_parse(data), _rel(path), name, lines))
+    mentions.sort(key=lambda mention: (mention.file, mention.line, mention.column or 0))
+    return mentions
 
 
 # ---- import extraction ------------------------------------------------------
@@ -399,14 +454,20 @@ class AstFindReferences(Tool):
 
     def run(self, request: FindReferencesRequest) -> RefList:
         references: list[Reference] = []
+        unresolved: list[UnresolvedMention] = []
         for path in _python_files("."):
             rel = _rel(path)
-            for node in _identifier_nodes(_parse(path.read_bytes()), request.symbol):
+            data = path.read_bytes()
+            root = _parse(data)
+            for node in _identifier_nodes(root, request.symbol):
                 references.append(
                     Reference(file=rel, line=_line(node), symbol=request.symbol, column=node.start_point[1])
                 )
+            lines = data.decode("utf-8", "replace").split("\n")
+            unresolved.extend(_mentions_from_root(root, rel, request.symbol, lines))
         references.sort(key=lambda ref: (ref.file, ref.line, ref.column or 0))
-        return RefList(symbol=request.symbol, references=references)
+        unresolved.sort(key=lambda mention: (mention.file, mention.line, mention.column or 0))
+        return RefList(symbol=request.symbol, references=references, unresolved=unresolved)
 
 
 class AstCallGraphTool(Tool):
@@ -532,12 +593,18 @@ class AstRenameSymbol(Tool):
                     lines[reference.line - 1], reference.column or 0, old, request.new_name
                 )
             planned[_resolve(file)] = "\n".join(lines)
+        # Flag the string/comment sites still naming the old symbol *before* writing
+        # — reflection, string-keyed dispatch, config, docs the AST cannot resolve.
+        # They are never edited; surfacing them stops a scoped rename from reporting
+        # a clean success while a dynamic call site still points at the old name.
+        unresolved = _unresolved_mentions(old)
         for path, text in planned.items():
             path.write_text(text)
         return AstRenameResult(
             new_name=request.new_name,
             sites_changed=len(request.references.references),
             files_changed=sorted(by_file),
+            unresolved=unresolved,
         )
 
 
