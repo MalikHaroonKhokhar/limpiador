@@ -347,6 +347,61 @@ def build_registry() -> ToolRegistry:
     return registry
 
 
+# The protocol verbs act on the *run*, not the repo — plan bookkeeping and the
+# terminal signal — so the loop's control flow depends on them regardless of how
+# tools are presented. They are the core minus the two *discovery* verbs
+# (``search_tools`` / ``load_tool``). A static, full-menu registry keeps these and
+# drops discovery; the dynamic one keeps all five.
+_PROTOCOL_CORE_NAMES: tuple[str, ...] = (PLAN_ADD, PLAN_RESOLVE, FINISH)
+
+
+class StaticRegistry(ToolRegistry):
+    """The rejected alternative, kept measurable (ARCHITECTURE.md §15, MEMO).
+
+    limpiador argues *against* the "register everything, hand the model all fifty
+    schemas on every turn, let it pick" design, in favour of dynamic discovery
+    (:class:`ToolRegistry`). This subclass *is* that alternative, preserved as a
+    first-class, greppable baseline so the argument can be *measured* rather than
+    merely asserted: the ablation harness (``python -m evals.ablation``) drives the
+    same cases through both and compares tokens, turns, and selection.
+
+    It presents the loop's protocol verbs plus *every* repo tool as directly
+    callable, and omits ``search_tools`` / ``load_tool`` entirely — discovery is
+    precisely the mechanism this baseline removes. Every declared tool is
+    pre-loaded (see :func:`build_static_registry`), so a call the model makes
+    dispatches through the inherited path without a preceding ``load_tool``.
+    """
+
+    def active_schemas(self) -> list[dict[str, object]]:
+        """The full menu: the protocol verbs plus every repo tool, on every turn.
+
+        This is the whole point of the baseline — the property :class:`ToolRegistry`
+        is built to *avoid*. The footprint scales with the size of the catalogue,
+        replayed on each of a run's twenty-plus turns, not with what a task uses.
+        """
+        schemas = [
+            openai_function_schema(core.name, core.description, core.input_model)
+            for core in _CORE_TOOLS
+            if core.name in _PROTOCOL_CORE_NAMES
+        ]
+        schemas.extend(self._tools[name].openai_schema() for name in sorted(self._loaded))
+        return schemas
+
+
+def build_static_registry() -> StaticRegistry:
+    """A :class:`StaticRegistry` with every declared tool registered *and loaded*.
+
+    Pre-loading through the public :meth:`~ToolRegistry.load` seam means dispatch
+    resolves any repo tool the model calls, exactly as if it had discovered and
+    loaded it first — the baseline just hands the whole catalogue over up front.
+    """
+    registry = StaticRegistry()
+    _install_declared_tools(registry)
+    for name in registry.tool_names():
+        registry.load(LoadToolRequest(name=name))
+    return registry
+
+
 # The default application registry: the core meta-tools plus all fifty-seven
 # declared tools, registered at import. Tests build their own isolated
 # ToolRegistry instances; this is the one the agent loop runs against.

@@ -1,4 +1,4 @@
-.PHONY: help lint typecheck check test test-unit test-integration test-e2e test-reproduce eval \
+.PHONY: help lint typecheck check test test-unit test-integration test-e2e test-reproduce eval ablation \
         test-all test-coverage test-coverage-report test-fast test-failed \
         test-specific test-e2e-check run run-sandbox dev-mock demo clean install setup verify
 
@@ -191,6 +191,16 @@ eval: test-e2e-check
 	@echo ""
 	@$(REAL_ENV) $(PYTHON) -m evals.harness
 	@echo "✅ Eval run complete. See evals/report output."
+
+# ============================================================================
+# Ablation — dynamic tool discovery vs. the full-menu baseline (ARCH §15, MEMO)
+# ============================================================================
+
+ablation: ## put a number on the defended decision: retrieval probe (free) + A/B agent run (real, OPENAI_API_KEY)
+	@echo "🔬 ABLATION — dynamic discovery vs. full-menu baseline"
+	@echo "   Retrieval probe runs free; the A/B agent run needs OPENAI_API_KEY (costs credits)."
+	@echo ""
+	@$(REAL_ENV) $(PYTHON) -m evals.ablation
 
 # ============================================================================
 # Full pyramid — everything, including the real-mode tiers (costs credits)

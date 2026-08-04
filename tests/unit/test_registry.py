@@ -426,3 +426,37 @@ def test_invoking_a_declared_but_unimplemented_tool_raises_a_typed_error() -> No
     # It is a recoverable ToolError, so the loop can fold it back into context
     # rather than crashing on an unimplemented capability.
     assert isinstance(caught.value, ToolError)
+
+
+# ---- the StaticRegistry baseline: the rejected alternative, made measurable ---
+# ``ToolRegistry`` hides the full menu behind discovery; ``StaticRegistry`` is the
+# design it argues against — hand the model everything, every turn — kept as a
+# first-class baseline so the ablation (evals/ablation.py) can put a number on the
+# difference. These tests pin the one property that makes it that baseline.
+def test_static_registry_hands_over_the_whole_menu_every_turn() -> None:
+    from limpiador.tools.registry import build_static_registry
+
+    registry = build_static_registry()
+    active = set(_active_names(registry))
+
+    # Every repo tool is present up front, by its OpenAI-safe name — the opposite
+    # of the dynamic registry, where none appear until loaded.
+    for name in _DECLARED_TOOL_NAMES:
+        assert name.replace(".", "_") in active
+    # The loop's protocol verbs stay (it depends on them)...
+    assert {PLAN_ADD, PLAN_RESOLVE, FINISH} <= active
+    # ...but the two *discovery* verbs are gone: there is nothing to discover when
+    # the whole catalogue is already on the table.
+    assert SEARCH_TOOLS not in active
+    assert LOAD_TOOL not in active
+    # 57 repo tools + the three protocol verbs, and nothing else.
+    assert len(active) == len(_DECLARED_TOOL_NAMES) + 3
+
+
+def test_static_registry_pre_loads_every_tool_so_a_call_needs_no_discovery() -> None:
+    from limpiador.tools.registry import build_static_registry
+
+    registry = build_static_registry()
+    # Every declared tool is already loaded, so dispatch resolves a call the model
+    # makes without a preceding load_tool — which is what "hand it everything" means.
+    assert all(registry.is_loaded(name) for name in registry.tool_names())
