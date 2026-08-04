@@ -222,7 +222,12 @@ def _mentions_from_root(root: Node, rel: str, name: str, lines: list[str]) -> li
     pattern = _word_pattern(name)
     mentions: list[UnresolvedMention] = []
     for node in _walk(root):
-        if node.type not in ("string", "comment"):
+        # ``string_content`` (not the whole ``string`` node) is the literal text
+        # only — it excludes an f-string's ``{interpolation}`` subtrees, which hold
+        # real identifier references the rename *does* edit. Flagging those would
+        # contradict the "not edited" contract; matching content nodes also stops
+        # an f-string wrapper from double-counting a nested string it contains.
+        if node.type not in ("string_content", "comment"):
             continue
         text = node.text.decode("utf-8", "replace")
         if not pattern.search(text):

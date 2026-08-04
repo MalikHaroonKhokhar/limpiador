@@ -295,6 +295,38 @@ def test_unresolved_mentions_respect_word_boundaries(project) -> None:
     assert all("recompute_all" not in m.context for m in result.unresolved)
 
 
+def test_fstring_interpolation_is_a_reference_not_an_unresolved_string(project) -> None:
+    """An f-string that *calls* the symbol interpolates a real identifier reference
+    — the rename edits it — so it must not ALSO be flagged as an un-edited string,
+    or the flag contradicts its own contract on the most common dynamic-looking
+    code. Only the literal text (string_content) counts, never the {interpolation}."""
+    (project / "pkg" / "fstr.py").write_text(
+        'def show(x):\n'
+        '    return f"total is {compute(x)}"\n'
+    )
+    result = _tool("ast.find_references").invoke({"file": "pkg/core.py", "symbol": "compute"})
+
+    # The interpolated call is a resolved reference...
+    assert ("pkg/fstr.py", 2) in {(r.file, r.line) for r in result.references}
+    # ...and it is NOT reported as an unresolved string site.
+    assert all(m.file != "pkg/fstr.py" for m in result.unresolved)
+
+
+def test_a_string_key_inside_an_interpolation_is_still_flagged(project) -> None:
+    """The literal text of a nested string inside an interpolation is still a
+    genuine dynamic-dispatch site — ``f"{d['compute']}"`` — so it stays flagged,
+    exactly once (the outer f-string wrapper must not double-count it)."""
+    (project / "pkg" / "dyn2.py").write_text(
+        'def wire(d):\n'
+        "    return f\"{d['compute']}\"\n"
+    )
+    result = _tool("ast.find_references").invoke({"file": "pkg/core.py", "symbol": "compute"})
+
+    dyn = [m for m in result.unresolved if m.file == "pkg/dyn2.py"]
+    assert [m.line for m in dyn] == [2]
+    assert dyn[0].kind == "string"
+
+
 # ---- call_graph -------------------------------------------------------------
 def test_call_graph_traverses_real_calls(project) -> None:
     result = _tool("ast.call_graph").invoke({"symbol": "main", "depth": 2})
