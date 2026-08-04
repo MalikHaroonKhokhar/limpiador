@@ -242,6 +242,91 @@ def test_rename_changes_no_sites_outside_the_reference_list(project) -> None:
     assert (project / "pkg" / "helpers.py").read_text() == _HELPERS
 
 
+# ---- unresolved mentions: the dynamic-dispatch safety net --------------------
+# A static rename can only see identifier nodes. Anything resolved at runtime — a
+# reflective getattr, a string-keyed dispatch table, config that names a function
+# — appears only in a string or comment, so the rename cannot touch it and would
+# otherwise report a clean success while a dynamic call site still names the old
+# symbol. find_references/rename now *flag* those sites (never edit them) so a
+# "safe" rename cannot silently leave a dynamic reference dangling.
+def test_find_references_flags_string_and_comment_mentions_as_unresolved(project) -> None:
+    result = _tool("ast.find_references").invoke({"file": "pkg/core.py", "symbol": "compute"})
+
+    # The resolved references are unchanged — strings/comments are NOT references.
+    assert sorted(ref.line for ref in result.references) == [6, 14, 19]
+    # ...but they now surface as unresolved candidates to verify by hand: the
+    # comment on line 7 and the string literal on line 8.
+    by_line = {m.line: m for m in result.unresolved}
+    assert set(by_line) == {7, 8}
+    assert by_line[7].kind == "comment" and "compute the total" in by_line[7].context
+    assert by_line[8].kind == "string" and 'label = "compute"' in by_line[8].context
+    assert all(m.file == "pkg/core.py" for m in result.unresolved)
+
+
+def test_rename_reports_the_string_and_comment_sites_it_left_alone(project) -> None:
+    refs = _tool("ast.find_references").invoke({"file": "pkg/core.py", "symbol": "compute"})
+    result = _tool("ast.rename_symbol").invoke(RenameSymbolRequest(references=refs, new_name="calculate"))
+
+    # The rename still edits exactly the resolved sites...
+    assert result.sites_changed == 3
+    text = (project / "pkg" / "core.py").read_text()
+    assert "# compute the total" in text and 'label = "compute"' in text  # left intact
+    # ...and the result now carries the flagged, un-edited sites still naming the
+    # old symbol, so the success report cannot be mistaken for "fully renamed".
+    flagged = {(m.kind, m.line) for m in result.unresolved}
+    assert flagged == {("comment", 7), ("string", 8)}
+
+
+def test_unresolved_mentions_respect_word_boundaries(project) -> None:
+    """A candidate is a whole-word match, so a reflective ``getattr(obj, "compute")``
+    is flagged but an unrelated ``"recompute_all"`` that merely contains the name
+    is not — the flag is a signal, not indiscriminate substring noise."""
+    (project / "pkg" / "dyn.py").write_text(
+        'def wire(obj):\n'
+        '    fn = getattr(obj, "compute")\n'
+        '    other = "recompute_all"\n'
+        '    return fn, other\n'
+    )
+    result = _tool("ast.find_references").invoke({"file": "pkg/core.py", "symbol": "compute"})
+
+    dyn = [m for m in result.unresolved if m.file == "pkg/dyn.py"]
+    assert [m.line for m in dyn] == [2]  # the getattr string, and only it
+    assert dyn[0].kind == "string" and "getattr" in dyn[0].context
+    assert all("recompute_all" not in m.context for m in result.unresolved)
+
+
+def test_fstring_interpolation_is_a_reference_not_an_unresolved_string(project) -> None:
+    """An f-string that *calls* the symbol interpolates a real identifier reference
+    — the rename edits it — so it must not ALSO be flagged as an un-edited string,
+    or the flag contradicts its own contract on the most common dynamic-looking
+    code. Only the literal text (string_content) counts, never the {interpolation}."""
+    (project / "pkg" / "fstr.py").write_text(
+        'def show(x):\n'
+        '    return f"total is {compute(x)}"\n'
+    )
+    result = _tool("ast.find_references").invoke({"file": "pkg/core.py", "symbol": "compute"})
+
+    # The interpolated call is a resolved reference...
+    assert ("pkg/fstr.py", 2) in {(r.file, r.line) for r in result.references}
+    # ...and it is NOT reported as an unresolved string site.
+    assert all(m.file != "pkg/fstr.py" for m in result.unresolved)
+
+
+def test_a_string_key_inside_an_interpolation_is_still_flagged(project) -> None:
+    """The literal text of a nested string inside an interpolation is still a
+    genuine dynamic-dispatch site — ``f"{d['compute']}"`` — so it stays flagged,
+    exactly once (the outer f-string wrapper must not double-count it)."""
+    (project / "pkg" / "dyn2.py").write_text(
+        'def wire(d):\n'
+        "    return f\"{d['compute']}\"\n"
+    )
+    result = _tool("ast.find_references").invoke({"file": "pkg/core.py", "symbol": "compute"})
+
+    dyn = [m for m in result.unresolved if m.file == "pkg/dyn2.py"]
+    assert [m.line for m in dyn] == [2]
+    assert dyn[0].kind == "string"
+
+
 # ---- call_graph -------------------------------------------------------------
 def test_call_graph_traverses_real_calls(project) -> None:
     result = _tool("ast.call_graph").invoke({"symbol": "main", "depth": 2})
