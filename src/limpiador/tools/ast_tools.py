@@ -213,8 +213,9 @@ def _word_pattern(name: str) -> re.Pattern[str]:
 def _mentions_from_root(root: Node, rel: str, name: str, lines: list[str]) -> list[UnresolvedMention]:
     """String-literal and comment sites naming ``name`` in one parsed file.
 
-    Only ``string`` and ``comment`` nodes are inspected — never identifiers — so
-    these are exactly the occurrences a static rename cannot resolve to a
+    Only string *literal text* (``string_content``) and ``comment`` nodes are
+    inspected — never identifiers, never an f-string's ``{interpolation}`` code —
+    so these are exactly the occurrences a static rename cannot resolve to a
     reference: reflection, string-keyed dispatch, config, docstrings. Each matching
     node yields one mention, anchored at the first line within it that matches,
     with that source line kept as context for the model to judge.
